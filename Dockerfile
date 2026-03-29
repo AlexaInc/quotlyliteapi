@@ -26,8 +26,14 @@ RUN apt-get update && apt-get install -y \
     fonts-noto-cjk \
     fonts-noto-color-emoji \
     fonts-noto-ui-core \
+    chromium \
+    python3 \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
+
+# Set environment variable for Puppeteer to use the pre-installed Chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Set working directory
 WORKDIR /app
@@ -35,11 +41,11 @@ WORKDIR /app
 # Clone the repository
 RUN git clone https://github.com/AlexaInc/quotlyliteapi.git .
 
-# Install dependencies
-RUN npm install
+# Install dependencies with legacy peer deps and rebuild native modules
+RUN npm install --legacy-peer-deps && \
+    npm rebuild sharp canvas
 
 # Ensure Puppeteer can find Chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false
 ENV PORT=7860
 
 # Expose port
