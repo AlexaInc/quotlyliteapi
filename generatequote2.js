@@ -293,7 +293,6 @@ body { font-family: 'Inter','Noto Sans','Noto Sans SC','Noto Sans Symbols',sans-
 
     return await sharp(ss)
         .trim({ threshold: 5 })
-        .resize({ width: 512, height: 512, fit: 'inside', withoutEnlargement: true, kernel: 'lanczos3' })
         .sharpen({ sigma: 0.5 })
         .webp({ quality: 100, lossless: true })
         .toBuffer();
