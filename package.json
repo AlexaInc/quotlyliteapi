@@ -1,0 +1,23 @@
+{
+    "name": "quoter-bot",
+    "version": "1.0.0",
+    "description": "Premium Telegram Quote Sticker Bot",
+    "main": "generatequote2.js",
+    "scripts": {
+        "start": "node generatequote2.js",
+        "dev": "nodemon generatequote2.js"
+    },
+    "dependencies": {
+        "axios": "^1.6.0",
+        "canvas": "^2.11.2",
+        "dotenv": "^16.3.1",
+        "express": "^4.18.2",
+        "https-proxy-agent": "^7.0.2",
+        "puppeteer": "^21.5.0",
+        "sharp": "^0.32.6",
+        "socks-proxy-agent": "^8.0.2"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    }
+}

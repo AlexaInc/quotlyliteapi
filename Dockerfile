@@ -1,0 +1,49 @@
+FROM node:18
+
+# Install system dependencies for Canvas, Puppeteer and Git
+RUN apt-get update && apt-get install -y \
+    git \
+    libcairo2-dev \
+    libjpeg-dev \
+    libpango1.0-dev \
+    libgif-dev \
+    build-essential \
+    g++ \
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libxshmfence1 \
+    fonts-noto \
+    fonts-noto-cjk \
+    fonts-noto-color-emoji \
+    fonts-noto-ui-core \
+    --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Clone the repository
+RUN git clone https://github.com/AlexaInc/quotlyliteapi.git .
+
+# Install dependencies
+RUN npm install
+
+# Ensure Puppeteer can find Chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false
+ENV PORT=7860
+
+# Expose port
+EXPOSE 7860
+
+# Start the Web Interface
+CMD ["node", "app.js"]
