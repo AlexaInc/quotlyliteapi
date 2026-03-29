@@ -6,3 +6,5 @@ node_modules
 *.webp
 *.jpg
 package-lock.json
+test*
+

@@ -19,36 +19,30 @@ app.get('/', (req, res) => {
 // API endpoint to generate quote sticker
 app.post('/api/generate', async (req, res) => {
     try {
-        const {
-            firstName,
-            lastName,
-            customEmojiId,
-            message,
-            nameColorId,
-            replySender,
-            replyMessage,
-            replySenderColor,
-            entities
-        } = req.body;
+        const { messages } = req.body;
 
-        // Process images if provided as base64
-        let inputImageBuffer = null;
-        if (req.body.avatarBase64) {
-            inputImageBuffer = Buffer.from(req.body.avatarBase64.split(',')[1], 'base64');
+        // Normalize to array of messages
+        let msgList;
+        if (Array.isArray(messages)) {
+            msgList = messages;
+        } else {
+            msgList = [{
+                firstName: req.body.firstName || 'User',
+                lastName: req.body.lastName || '',
+                customemojiid: req.body.customEmojiId || null,
+                message: req.body.message || '',
+                nameColorId: req.body.nameColorId || 0,
+                inputImageBuffer: req.body.avatarBase64 ? Buffer.from(req.body.avatarBase64.split(',')[1], 'base64') : null,
+                replySender: req.body.replySender || null,
+                replyMessage: req.body.replyMessage || null,
+                replysendercolor: req.body.replySenderColor || 0,
+                entities: req.body.entities || [],
+                id: '1',
+                isAbsoluteLast: true
+            }];
         }
 
-        const buffer = await createImage(
-            firstName || 'User',
-            lastName || '',
-            customEmojiId || null,
-            message || '',
-            nameColorId || 0,
-            inputImageBuffer,
-            replySender || null,
-            replyMessage || null,
-            replySenderColor || 0,
-            entities || []
-        );
+        const buffer = await createImage(msgList);
 
         res.set('Content-Type', 'image/webp');
         res.send(buffer);
