@@ -100,32 +100,6 @@ async function getPremiumEmojiB64(id) {
     } catch { return null; }
 }
 
-async function getTgFileBuffer(fileId, token = BOT_TOKEN) {
-    if (!fileId) return null;
-    try {
-        const { data: d2 } = await axios.post(`https://api.telegram.org/bot${token}/getFile`, { file_id: fileId });
-        const { data: raw } = await axios.get(`https://api.telegram.org/file/bot${token}/${d2.result.file_path}`, { responseType: 'arraybuffer' });
-        return Buffer.from(raw);
-    } catch { return null; }
-}
-
-async function getUserProfilePhoto(userId, token = BOT_TOKEN) {
-    if (!userId) return null;
-    try {
-        const { data: d1 } = await axios.post(`https://api.telegram.org/bot${token}/getUserProfilePhotos`, { user_id: userId, limit: 1 });
-        const ph = d1.result?.photos?.[0]?.[0]; if (!ph) return null;
-        return await getTgFileBuffer(ph.file_id, token);
-    } catch { return null; }
-}
-
-async function getUrlBuffer(url) {
-    if (!url) return null;
-    try {
-        const { data: b } = await axios.get(url, { responseType: 'arraybuffer' });
-        return Buffer.from(b);
-    } catch { return null; }
-}
-
 async function msgToHtml(text, entities = []) {
     if (!text) return '';
     // Smart Offset-Preserving Break: Replace space before link with newline (same length = safe offsets!)
@@ -223,32 +197,23 @@ async function createImage(firstName, lastName, customemojiid, message, nameColo
         const name = `${d.firstName || ''} ${d.lastName || ''}`.trim() || 'User';
         const color = getTelegramColor(d.nameColorId);
         const nameHtml = nameToHtml(name, color, NAME_FS);
-
-        // --- DYNAMIC PHOTO & MEDIA RESOLUTION (With Multi-Bot Support) ---
-        const token = d.botToken || BOT_TOKEN;
-
-        let pBuffer = d.inputImageBuffer;
-        if (!pBuffer && d.userId) pBuffer = await getUserProfilePhoto(d.userId, token);
-        const rawAvatar = pBuffer ? await sharp(pBuffer).png().toBuffer() : await dummyAvatar(d.firstName, d.lastName, color);
+        const rawAvatar = d.inputImageBuffer ? await sharp(d.inputImageBuffer).png().toBuffer() : await dummyAvatar(d.firstName, d.lastName, color);
         const avatarB64 = `data:image/png;base64,${rawAvatar.toString('base64')}`;
 
-        let mBuffer = d.mediaBuffer;
-        if (!mBuffer && d.mediaFileId) mBuffer = await getTgFileBuffer(d.mediaFileId, token);
-        if (!mBuffer && d.mediaUrl) mBuffer = await getUrlBuffer(d.mediaUrl);
-
         let mediaB64 = null;
-        if (mBuffer) {
+        if (d.mediaBuffer) {
             try {
-                const mb = await sharp(mBuffer)
+                const mb = await sharp(d.mediaBuffer)
                     .resize(1000, 1000, { fit: 'inside', kernel: 'lanczos3' })
                     .png()
                     .toBuffer();
                 mediaB64 = `data:image/png;base64,${mb.toString('base64')}`;
             } catch (err) {
+                // Return null if all else fails
                 mediaB64 = null;
             }
         }
-        const isSticker = !!mBuffer && (!d.message || !d.message.trim());
+        const isSticker = !!d.mediaBuffer && (!d.message || !d.message.trim());
         const rColor = getTelegramColor(d.replysendercolor || 0);
         const rName = d.replySender ? nameToHtml(d.replySender, rColor, NAME_FS * 0.85) : '';
         const fName = d.forwardName ? nameToHtml(d.forwardName, '#64b5f6', NAME_FS * 0.75) : '';
