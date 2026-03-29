@@ -147,6 +147,9 @@ async function msgToHtml(text, entities = []) {
             else if (e.type === 'underline') html += '<u>';
             else if (e.type === 'strikethrough') html += '<s>';
             else if (e.type === 'code') html += '<code>';
+            else if (e.type === 'pre') html += '<pre>';
+            else if (e.type === 'spoiler') html += '<span class="spoiler">';
+            else if (e.type === 'blockquote' || e.type === 'expandable_blockquote') html += '<span class="blockquote">';
             else if (e.type === 'url' || e.type === 'text_url' || e.type === 'mention' || e.type === 'bot_command') html += '<span class="link">';
             else if (e.type === 'custom_emoji') {
                 const b64 = await getPremiumEmojiB64(e.custom_emoji_id);
@@ -161,6 +164,9 @@ async function msgToHtml(text, entities = []) {
             else if (e.type === 'underline') html += '</u>';
             else if (e.type === 'strikethrough') html += '</s>';
             else if (e.type === 'code') html += '</code>';
+            else if (e.type === 'pre') html += '</pre>';
+            else if (e.type === 'spoiler') html += '</span>';
+            else if (e.type === 'blockquote' || e.type === 'expandable_blockquote') html += '</span>';
             else if (e.type === 'url' || e.type === 'text_url' || e.type === 'mention' || e.type === 'bot_command') html += '</span>';
         }
     }
@@ -262,6 +268,10 @@ body { font-family: 'Inter','Noto Sans','Noto Sans SC','Noto Sans Symbols',sans-
 .reply-text { font-size: ${MSG_FS * 0.7}px; color: #7f91a4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .emoji { height: 1.2em; width: 1.2em; vertical-align: middle; }
 .msg-emoji { height: 1.3em; width: 1.3em; vertical-align: middle; }
+code { font-family: 'JetBrains Mono', 'Consolas', monospace; background: rgba(255,255,255,0.1); padding: 0.1em 0.3em; border-radius: 4px; font-size: 0.9em; }
+pre { font-family: 'JetBrains Mono', 'Consolas', monospace; background: rgba(255,255,255,0.08); padding: 8px; border-radius: 6px; margin: 4px 0; display: block; white-space: pre-wrap; word-break: break-all; font-size: 0.85em; border-left: 3px solid rgba(255,255,255,0.2); }
+.spoiler { background: rgba(255,255,255,0.15); color: transparent; border-radius: 4px; filter: blur(5px); }
+.blockquote { display: block; border-left: 3px solid #64b5f6; padding-left: 10px; margin: 4px 0; font-style: italic; color: #7f91a4; }
 `;
 
     const htmlBody = items.map(m => {
