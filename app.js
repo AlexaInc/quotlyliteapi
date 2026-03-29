@@ -21,10 +21,15 @@ app.post('/api/generate', async (req, res) => {
     try {
         const { messages } = req.body;
 
-        // Normalize to array of messages
+        // Normalize to array of messages and process base64 buffers
         let msgList;
         if (Array.isArray(messages)) {
-            msgList = messages;
+            msgList = messages.map(m => {
+                const item = { ...m };
+                if (m.avatarBase64) item.inputImageBuffer = Buffer.from(m.avatarBase64.split(',')[1], 'base64');
+                if (m.mediaBase64) item.mediaBuffer = Buffer.from(m.mediaBase64.split(',')[1], 'base64');
+                return item;
+            });
         } else {
             msgList = [{
                 firstName: req.body.firstName || 'User',
@@ -33,6 +38,7 @@ app.post('/api/generate', async (req, res) => {
                 message: req.body.message || '',
                 nameColorId: req.body.nameColorId || 0,
                 inputImageBuffer: req.body.avatarBase64 ? Buffer.from(req.body.avatarBase64.split(',')[1], 'base64') : null,
+                mediaBuffer: req.body.mediaBase64 ? Buffer.from(req.body.mediaBase64.split(',')[1], 'base64') : null,
                 replySender: req.body.replySender || null,
                 replyMessage: req.body.replyMessage || null,
                 replysendercolor: req.body.replySenderColor || 0,
