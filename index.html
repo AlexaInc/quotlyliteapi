@@ -149,6 +149,7 @@
                 <input type="text" id="replyMessage" placeholder="Previous message...">
             </div>
             <button id="generateBtn">Generate Sticker 🚀</button>
+            <button id="updateBtn" style="background: linear-gradient(135deg, #ef4444, #f97316); margin-top: 5px; font-size: 0.9rem; padding: 10px;">Update Source (Git Pull) 🔄</button>
         </div>
 
         <div class="preview-section">
@@ -203,6 +204,31 @@
                 alert('Error generating sticker: ' + err.message);
                 placeholder.style.display = 'flex';
                 loading.style.display = 'none';
+            }
+        });
+
+        document.getElementById('updateBtn').addEventListener('click', async () => {
+            if (!confirm('Are you sure you want to pull latest code and restart the engine?')) return;
+            
+            const btn = document.getElementById('updateBtn');
+            btn.textContent = 'Updating... ⏳';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/api/update', { method: 'POST' });
+                const result = await response.json();
+                
+                if (response.ok) {
+                    alert('Update Success: ' + result.message + '\n' + result.output);
+                    // Reload after a delay for the server to restart
+                    setTimeout(() => window.location.reload(), 5000);
+                } else {
+                    throw new Error(result.error || 'Update failed');
+                }
+            } catch (err) {
+                alert('Update Error: ' + err.message);
+                btn.textContent = 'Update Source (Git Pull) 🔄';
+                btn.disabled = false;
             }
         });
     </script>

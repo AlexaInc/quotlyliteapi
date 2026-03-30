@@ -58,6 +58,27 @@ app.post('/api/generate', async (req, res) => {
     }
 });
 
+// Update endpoint
+app.post('/api/update', (req, res) => {
+    const { exec } = require('child_process');
+    console.log('🔄 Update requested via Web UI...');
+
+    exec('git pull', (err, stdout, stderr) => {
+        if (err) {
+            console.error('❌ Git pull failed:', err);
+            return res.status(500).json({ error: 'Update failed', details: err.message });
+        }
+        console.log('✅ Git pull success:', stdout);
+        res.json({ message: 'Update success. Restarting...', output: stdout });
+
+        // Schedule restart
+        setTimeout(() => {
+            console.log('⚙️ Restarting process now!');
+            process.exit(0);
+        }, 1000);
+    });
+});
+
 // Start server
 app.listen(port, () => {
     console.log(`\n🚀 Premium Quoter UI: http://localhost:${port}`);
