@@ -39,8 +39,11 @@ def escape_html(text):
 EMOJI_CACHE = {}
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-def get_premium_emoji_b64(emoji_id):
+def get_premium_emoji_b64(emoji_id: str):
     """Downloads and converts premium stickers/emojis from Telegram."""
+    if not emoji_id:
+        return None
+        
     if emoji_id in EMOJI_CACHE:
         return EMOJI_CACHE[emoji_id]
     
@@ -251,9 +254,6 @@ async def generate(first_name, last_name, message, color_id, avatar):
     
     return await engine.render_sticker(msgs)
 
-def run_generate(*args):
-    return asyncio.run(generate(*args))
-
 with gr.Blocks(theme=gr.themes.Default(primary_hue="blue"), title="Python Quoter Engine 🐍") as demo:
     gr.Markdown("# Premium Python Quoter Engine 🐍")
     gr.Markdown("Re-engineered from Node.js to pure Python & Playwright.")
@@ -266,9 +266,9 @@ with gr.Blocks(theme=gr.themes.Default(primary_hue="blue"), title="Python Quoter
             msg = gr.TextArea(label="Message", value="Now running purely on Python! 🔥", lines=4)
             btn = gr.Button("Generate Premium Sticker", variant="primary")
         with gr.Column():
-            output = gr.Image(label="Result", type="value")
+            output = gr.Image(label="Result")
 
-    btn.click(fn=run_generate, inputs=[f_name, l_name, msg, gr.State(0), avatar], outputs=output)
+    btn.click(fn=generate, inputs=[f_name, l_name, msg, gr.State(0), avatar], outputs=output)
 
 if __name__ == "__main__":
     # Ensure Playwright browser is installed for the Gradio SDK
