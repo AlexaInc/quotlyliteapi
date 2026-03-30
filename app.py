@@ -271,4 +271,17 @@ with gr.Blocks(theme=gr.themes.Default(primary_hue="blue"), title="Python Quoter
     btn.click(fn=run_generate, inputs=[f_name, l_name, msg, gr.State(0), avatar], outputs=output)
 
 if __name__ == "__main__":
+    # Ensure Playwright browser is installed for the Gradio SDK
+    try:
+        print("🛠️  Checking Playwright Chromium...")
+        os.system("playwright install chromium")
+    except Exception as e:
+        print(f"⚠️  Playwright install failed: {e}")
+
+    if not BOT_TOKEN:
+        print("\n" + "!" * 50)
+        print("⚠️  WARNING: BOT_TOKEN is not set in environment variables.")
+        print("ℹ️  Premium emoji downloading will NOT work.")
+        print("!" * 50 + "\n")
+    
     demo.launch(server_name="0.0.0.0", server_port=7860)
