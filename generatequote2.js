@@ -1,5 +1,4 @@
 require('dotenv').config();
-
 const fs = require('fs');
 const path = require('path');
 const satori = require('satori').default;
@@ -9,21 +8,28 @@ const { createCanvas, registerFont } = require('canvas');
 const sharp = require('sharp');
 const axios = require('axios');
 
-// --- FONTS LOADER ---
-function getFontBuffer() {
+// --- MULTI-FONT LOADER ---
+function loadFonts() {
+    const families = [];
     const paths = [
-        '/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf',
-        '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf',
-        'C:\\Windows\\Fonts\\arial.ttf',
-        'C:\\Windows\\Fonts\\segoeui.ttf'
+        { name: 'Noto Sans', path: '/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf', weight: 600 },
+        { name: 'Noto Sans', path: '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf', weight: 400 },
+        { name: 'Noto Symbols', path: '/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf', weight: 400 },
+        { name: 'Arial', path: 'C:\\Windows\\Fonts\\arial.ttf', weight: 400 },
+        { name: 'Segoe UI Symbol', path: 'C:\\Windows\\Fonts\\seguisym.ttf', weight: 400 }
     ];
-    for (const f of paths) {
-        if (fs.existsSync(f)) return fs.readFileSync(f);
-    }
-    // Fallback?
-    return null;
+
+    paths.forEach(f => {
+        if (fs.existsSync(f.path)) {
+            families.push({ name: f.name, data: fs.readFileSync(f.path), weight: f.weight, style: 'normal' });
+            try { registerFont(f.path, { family: f.name }); } catch {}
+            console.log(`✅ Loaded font: ${f.name} from ${f.path}`);
+        }
+    });
+    return families;
 }
-const fontData = getFontBuffer();
+const fonts = loadFonts();
+console.log(`ℹ️ Total fonts loaded: ${fonts.length}`);
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) {
@@ -31,7 +37,7 @@ if (!BOT_TOKEN) {
     process.exit(1);
 }
 
-// ─── Colour helpers ───────────────────────────────────────────────────────────
+// ─── Tone down the logs ────────────────────────────────────────────────────────
 function getTelegramColor(id) {
     const map = new Map([[0, '#FF516A'], [1, '#FF9442'], [2, '#C66FFF'], [3, '#50D892'], [4, '#64D4F5'], [5, '#5095ED'], [6, '#FF66A6'], [7, '#FF8280'], [8, '#EDD64E'], [9, '#C66FFF']]);
     return map.get(parseInt(id) % 10) || '#00ffff';
@@ -43,12 +49,11 @@ function escapeHtml(t) {
 
 function renderChunkImg(text, fontSize, color) {
     const tmp = createCanvas(1, 1); const tc = tmp.getContext('2d');
-    const FONT_S = `600 ${fontSize}px sans-serif`;
-    tc.font = FONT_S;
+    tc.font = `600 ${fontSize}px sans-serif`;
     const w = Math.max(1, tc.measureText(text).width);
     const h = Math.max(1, fontSize * 1.4);
     const cv = createCanvas(w, h); const ctx = cv.getContext('2d');
-    ctx.font = FONT_S;
+    ctx.font = `600 ${fontSize}px sans-serif`;
     ctx.fillStyle = color; ctx.textBaseline = 'middle';
     ctx.fillText(text, 0, h / 2);
     return `data:image/png;base64,${cv.toBuffer('image/png').toString('base64')}`;
@@ -83,17 +88,19 @@ const IS_EMOJI = /(\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\p{Emoji_Modifier_Base
 const ECACHE = new Map();
 async function getPremiumEmojiB64(id) {
     if (ECACHE.has(id)) return ECACHE.get(id);
+    console.log(`🔍 Fetching premium emoji: ${id}`);
     try {
-        const { data: d1 } = await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/getCustomEmojiStickers`, { custom_emoji_ids: [id] });
+        const { data: d1 } = await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/getCustomEmojiStickers`, { custom_emoji_ids: [id] }, { timeout: 5000 });
         const st = d1.result?.[0]; if (!st) return null;
-        const { data: d2 } = await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/getFile`, { file_id: st.thumbnail?.file_id || st.file_id });
-        const { data: raw } = await axios.get(`https://api.telegram.org/file/bot${BOT_TOKEN}/${d2.result.file_path}`, { responseType: 'arraybuffer' });
+        const { data: d2 } = await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/getFile`, { file_id: st.thumbnail?.file_id || st.file_id }, { timeout: 5000 });
+        const { data: raw } = await axios.get(`https://api.telegram.org/file/bot${BOT_TOKEN}/${d2.result.file_path}`, { responseType: 'arraybuffer', timeout: 5000 });
         const b64 = `data:image/png;base64,${(await sharp(raw).resize(128, 128).png().toBuffer()).toString('base64')}`;
         ECACHE.set(id, b64); return b64;
-    } catch { return null; }
+    } catch (e) { console.error(`❌ Premium emoji fetch failed: ${id}`, e.message); return null; }
 }
 
 async function msgToHtml(text, entities = []) {
+    console.log(`📝 Processing message to HTML (text length: ${text?.length})`);
     if (!text) return '';
     text = text.replace(/ (https?:\/\/|t\.me\/|Telegram\.me\/|@\w+)/gi, "\n$1");
     const sorted = (entities || []).sort((a, b) => a.offset - b.offset || b.length - a.length);
@@ -128,9 +135,7 @@ async function msgToHtml(text, entities = []) {
             const e = t.info;
             if (e.type === 'url' || e.type === 'text_url' || e.type === 'mention' || e.type === 'bot_command') {
                 const plain = html.replace(/<[^>]*>/g, '');
-                if (plain.length > 0 && /[a-z0-9\u0D80-\u0DFF]$/i.test(plain) && !html.endsWith('<br/>')) {
-                    html += '<br/>';
-                }
+                if (plain.length > 0 && /[a-z0-9\u0D80-\u0DFF]$/i.test(plain) && !html.endsWith('<br/>')) { html += '<br/>'; }
             }
 
             if (e.type === 'bold') html += '<b>';
@@ -176,12 +181,12 @@ async function dummyAvatar(f, l, color) {
 async function createImage(firstName, lastName, customemojiid, message, nameColorId, inputImageBuffer, replySender, replyMessage, replysendercolor, messageEntities = []) {
     let msgList = Array.isArray(firstName) ? firstName : [{ firstName, lastName, customemojiid, message, nameColorId, inputImageBuffer, replySender, replyMessage, replysendercolor, entities: messageEntities, id: '1', isAbsoluteLast: true }];
 
-    const SCALE = 2.0; // Satori is clear even at lower scale, saves perf
+    const SCALE = 2.0;
     const PP_SIZE = 38 * SCALE;
     const NAME_FS = 16 * SCALE;
     const MSG_FS = 16 * SCALE;
 
-    const items = await Promise.all(msgList.map(async (d, idx) => {
+    const items = await Promise.all(msgList.map(async d => {
         const name = `${d.firstName || ''} ${d.lastName || ''}`.trim() || 'User';
         const color = getTelegramColor(d.nameColorId);
         const nameHtml = nameToHtml(name, color, NAME_FS);
@@ -209,43 +214,20 @@ async function createImage(firstName, lastName, customemojiid, message, nameColo
         const prev = items[i - 1], next = items[i + 1];
         const samePrev = prev && prev.userId === m.userId && !m.fName;
         const sameNext = next && next.userId === m.userId && !next.fName;
-        let groupClass = '';
+        let groupClass = 'single';
         if (samePrev && sameNext) groupClass = 'middle';
         else if (samePrev) groupClass = 'last';
         else if (sameNext) groupClass = 'first';
-        else groupClass = 'single';
-        const showName = !samePrev && !m.isSticker;
-        const showAvatar = !sameNext;
-        return { ...m, groupClass, showName, showAvatar, samePrev };
+        return { ...m, groupClass, showName: !samePrev && !m.isSticker, showAvatar: !sameNext, samePrev };
     });
 
     const MSG_IN = '#111112';
-
-    // Build Virtual DOM for Satori
     const nodes = {
         type: 'div',
         props: {
-            id: 'wrap',
-            style: {
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 0,
-                padding: 30 * SCALE,
-                background: 'transparent',
-                fontFamily: 'sans-serif'
-            },
+            style: { display: 'flex', flexDirection: 'column', padding: 40 * SCALE, background: 'transparent' },
             children: rows.map(m => {
                 const isTail = m.groupClass === 'last' || m.groupClass === 'single';
-                const tailStyle = isTail ? {
-                    position: 'absolute',
-                    bottom: 0,
-                    left: -8 * SCALE,
-                    width: 8 * SCALE,
-                    height: 10 * SCALE,
-                    background: MSG_IN,
-                    clipPath: 'polygon(100% 0, 100% 100%, 0 100%)'
-                } : null;
-
                 return {
                     type: 'div',
                     props: {
@@ -254,72 +236,48 @@ async function createImage(firstName, lastName, customemojiid, message, nameColo
                             alignItems: 'flex-end',
                             position: 'relative',
                             width: 'auto',
-                            minWidth: 100 * SCALE,
-                            maxWidth: 600 * SCALE,
-                            margin: `${2 * SCALE}px ${10 * SCALE}px`,
+                            margin: `${2 * SCALE}px 0`,
                             marginTop: (!m.samePrev && items.indexOf(m) > 0) ? 10 * SCALE : 2 * SCALE,
                             gap: 6 * SCALE
                         },
                         children: [
-                            {
-                                type: 'div',
-                                props: {
-                                    style: {
-                                        width: PP_SIZE,
-                                        height: PP_SIZE,
-                                        borderRadius: '50%',
-                                        flexShrink: 0,
-                                        marginRight: 10 * SCALE,
-                                        backgroundSize: 'cover',
-                                        backgroundImage: `url(${m.avatarB64})`,
-                                        border: `${1 * SCALE}px solid rgba(255,255,255,0.05)`,
-                                        opacity: m.showAvatar ? 1 : 0
-                                    }
-                                }
-                            },
+                            { type: 'div', props: { style: { width: PP_SIZE, height: PP_SIZE, borderRadius: '50%', backgroundSize: 'cover', backgroundImage: `url(${m.avatarB64})`, border: `${1 * SCALE}px solid rgba(255,255,255,0.05)`, opacity: m.showAvatar ? 1 : 0 } } },
                             {
                                 type: 'div',
                                 props: {
                                     style: {
                                         position: 'relative',
-                                        padding: `${11 * SCALE}px ${24 * SCALE}px ${11 * SCALE}px ${16 * SCALE}px`,
+                                        padding: `${10 * SCALE}px ${16 * SCALE}px`,
                                         background: m.isSticker ? 'transparent' : MSG_IN,
                                         color: '#fff',
                                         fontSize: MSG_FS,
-                                        lineHeight: 1.48,
+                                        lineHeight: 1.4,
                                         display: 'flex',
                                         flexDirection: 'column',
                                         width: 'auto',
-                                        maxWidth: '100%',
-                                        borderRadius: 20 * SCALE,
-                                        borderTopLeftRadius: (m.groupClass === 'middle' || m.groupClass === 'last') ? 5 * SCALE : 20 * SCALE,
+                                        maxWidth: 450 * SCALE,
+                                        borderRadius: 18 * SCALE,
+                                        borderTopLeftRadius: (m.groupClass === 'middle' || m.groupClass === 'last') ? 5 * SCALE : 18 * SCALE,
                                         borderBottomLeftRadius: (m.groupClass === 'single' || m.groupClass === 'last') ? 0 : 5 * SCALE
                                     },
                                     children: [
-                                        tailStyle ? { type: 'div', props: { style: tailStyle } } : null,
-                                        m.isSticker ? (m.mediaB64 ? { type: 'img', props: { src: m.mediaB64, style: { width: 200 * SCALE, borderRadius: 8 * SCALE } } } : { type: 'div', props: { children: '[Failed sticker]' } }) : {
+                                        isTail && !m.isSticker ? {
+                                            type: 'svg',
+                                            props: {
+                                                width: 8 * SCALE,
+                                                height: 10 * SCALE,
+                                                style: { position: 'absolute', bottom: 0, left: -8 * SCALE + 0.5 },
+                                                children: [{ type: 'path', props: { d: `M 8 0 L 8 10 L 0 10 Q 4 10 8 0`, fill: MSG_IN } }]
+                                            }
+                                        } : null,
+                                        m.isSticker ? { type: 'img', props: { src: m.mediaB64, style: { width: 200 * SCALE, borderRadius: 8 * SCALE } } } : {
                                             type: 'div',
                                             props: {
                                                 style: { display: 'flex', flexDirection: 'column' },
                                                 children: [
-                                                    m.fName ? { type: 'div', props: { style: { fontSize: MSG_FS * 0.75, color: '#64b5f6', marginBottom: 4 * SCALE, opacity: 0.9 }, children: `Forwarded from ${m.fName}` } } : null,
-                                                    m.showName ? { 
-                                                        type: 'div', 
-                                                        props: { 
-                                                            style: { fontSize: NAME_FS, fontWeight: 600, marginBottom: 4 * SCALE, display: 'flex', alignItems: 'center' },
-                                                            children: [parse(m.nameHtml), m.statusB64 ? { type: 'img', props: { src: m.statusB64, style: { width: 18 * SCALE, height: 18 * SCALE, marginLeft: 2 * SCALE } } } : null]
-                                                        } 
-                                                    } : null,
-                                                    m.rName ? {
-                                                        type: 'div',
-                                                        props: {
-                                                            style: { background: 'rgba(255,255,255,0.06)', borderRadius: 6 * SCALE, padding: `${6 * SCALE}px ${10 * SCALE}px`, borderLeft: `${4 * SCALE}px solid ${m.rColor}`, marginBottom: 10 * SCALE, display: 'flex', flexDirection: 'column' },
-                                                            children: [
-                                                                { type: 'div', props: { style: { fontSize: MSG_FS * 0.72, fontWeight: 600, color: m.rColor }, children: parse(m.rName) } },
-                                                                { type: 'div', props: { style: { fontSize: MSG_FS * 0.7, color: '#7f91a4' }, children: m.rMsg } }
-                                                            ]
-                                                        }
-                                                    } : null,
+                                                    m.fName ? { type: 'div', props: { style: { fontSize: MSG_FS * 0.75, color: '#64b5f6', marginBottom: 4 * SCALE }, children: `Forwarded from ${m.fName}` } } : null,
+                                                    m.showName ? { type: 'div', props: { style: { fontSize: NAME_FS, fontWeight: 600, color: m.color, marginBottom: 4 * SCALE, display: 'flex', alignItems: 'center' }, children: [parse(m.nameHtml), m.statusB64 ? { type: 'img', props: { src: m.statusB64, style: { width: 18 * SCALE, height: 18 * SCALE, marginLeft: 2 * SCALE } } } : null] } } : null,
+                                                    m.rName ? { type: 'div', props: { style: { background: 'rgba(255,255,255,0.06)', borderRadius: 6 * SCALE, padding: `${6 * SCALE}px`, borderLeft: `${4 * SCALE}px solid ${m.rColor}`, marginBottom: 10 * SCALE }, children: [{ type: 'div', props: { style: { fontSize: MSG_FS * 0.7, fontWeight: 600, color: m.rColor }, children: parse(m.rName) } }, { type: 'div', props: { style: { fontSize: MSG_FS * 0.65, color: '#7f91a4' }, children: m.rMsg } }] } } : null,
                                                     m.mediaB64 ? { type: 'img', props: { src: m.mediaB64, style: { width: 400 * SCALE, borderRadius: 8 * SCALE, marginBottom: 6 * SCALE } } } : null,
                                                     m.msgHtml ? { type: 'div', props: { style: { display: 'flex', flexDirection: 'column' }, children: [parse(m.msgHtml)] } } : null
                                                 ].filter(Boolean)
@@ -335,40 +293,27 @@ async function createImage(firstName, lastName, customemojiid, message, nameColo
         }
     };
 
+    console.log('🎨 Starting Satori render...');
+    const startTime = Date.now();
     const svg = await satori(nodes, {
         width: 1200,
-        height: 3000, // Large enough, will trim later
-        fonts: fontData ? [{
-            name: 'sans-serif',
-            data: fontData,
-            weight: 400,
-            style: 'normal'
-        }] : []
+        height: 1500,
+        fonts: fonts.length > 0 ? fonts : []
     });
+    console.log(`✅ Satori render complete in ${Date.now() - startTime}ms`);
 
-    const resvg = new Resvg(svg, {
-        background: 'rgba(0,0,0,0)',
-        fitTo: { mode: 'original' }
-    });
-    const pngData = resvg.render();
-    const pngBuffer = pngData.asPng();
+    const resvg = new Resvg(svg, { background: 'rgba(0,0,0,0)', fitTo: { mode: 'original' } });
+    const pngBuffer = resvg.render().asPng();
 
-    return await sharp(pngBuffer)
-        .trim({ threshold: 5 })
-        .sharpen({ sigma: 0.5 })
-        .webp({ quality: 100, lossless: true })
-        .toBuffer();
+    return await sharp(pngBuffer).trim({ threshold: 5 }).sharpen({ sigma: 0.5 }).webp({ quality: 100, lossless: true }).toBuffer();
 }
 
 module.exports = createImage;
 
 if (require.main === module) {
     const http = require('http');
-    const port = process.env.PORT || 7860;
     http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('Satori Quoter Engine is Running! 🚀\n');
-    }).listen(port, '0.0.0.0', () => {
-        console.log(`\n✅ Satori Engine Health Server: http://0.0.0.0:${port}`);
-    });
+        res.end('Satori Engine Running! 🚀\n');
+    }).listen(process.env.PORT || 7860);
 }
