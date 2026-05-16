@@ -1,195 +1,471 @@
 require('dotenv').config();
 
-const puppeteer  = require('puppeteer');
+const puppeteer = require('puppeteer');
 const { createCanvas, registerFont } = require('canvas');
-const fs         = require('fs');
-const path       = require('path');
-const sharp      = require('sharp');
-const axios      = require('axios');
+const fs    = require('fs');
+const path  = require('path');
+const sharp = require('sharp');
+const axios = require('axios');
 
 // =============================================================================
-// FONT SETUP — scan system fonts for canvas rendering
+// FONT REGISTRATION
+// Scans every system font directory and registers all .ttf/.otf files
+// with node-canvas. Canvas uses Pango/FreeType which natively supports ALL
+// Unicode scripts, so registered names render perfectly with no tofu.
 // =============================================================================
 const SCAN_DIRS = [
     '/usr/share/fonts/truetype/noto-manual',
     '/usr/share/fonts/truetype/noto',
+    '/usr/share/fonts/truetype/noto-cjk',
     '/usr/share/fonts/truetype/noto-extra',
     '/usr/share/fonts/opentype/noto',
-    '/usr/share/fonts/truetype/noto-cjk',
     '/usr/share/fonts/opentype/noto-cjk',
-    '/usr/share/fonts/noto',
-    '/usr/share/fonts/noto-cjk',
+    '/usr/share/fonts/truetype/dejavu',
+    '/usr/share/fonts/truetype/liberation',
+    '/usr/share/fonts/truetype/liberation2',
+    '/usr/share/fonts/truetype/freefont',
+    '/usr/share/fonts/opentype/freefont',
+    '/usr/share/fonts/truetype/ancient-scripts',
+    '/usr/share/fonts/truetype/unifont',
+    '/usr/share/fonts/truetype/abyssinica',
+    '/usr/share/fonts/truetype/symbola',
+    '/usr/share/fonts/truetype/sil',
+    '/usr/share/fonts/truetype/lohit-deva',
+    '/usr/share/fonts/truetype/lohit-bengali',
+    '/usr/share/fonts/truetype/lohit-gujarati',
+    '/usr/share/fonts/truetype/lohit-kannada',
+    '/usr/share/fonts/truetype/lohit-malayalam',
+    '/usr/share/fonts/truetype/lohit-oriya',
+    '/usr/share/fonts/truetype/lohit-punjabi',
+    '/usr/share/fonts/truetype/lohit-tamil',
+    '/usr/share/fonts/truetype/lohit-telugu',
+    '/usr/share/fonts/truetype/samyak',
+    '/usr/share/fonts/truetype/samyak-fonts',
+    '/usr/share/fonts/truetype/sarai',
+    '/usr/share/fonts/truetype/smc',
+    '/usr/share/fonts/truetype/yrsa-rasa',
+    '/usr/share/fonts/truetype/tibetan-machine',
+    '/usr/share/fonts/truetype/tlwg',
+    '/usr/share/fonts/truetype/lklug-sinhala',
+    '/usr/share/fonts/truetype/khmeros',
+    '/usr/share/fonts/truetype/lao',
+    '/usr/share/fonts/truetype/padauk',
+    '/usr/share/fonts/truetype/mondulkiri',
+    '/usr/share/fonts/truetype/arphic',
+    '/usr/share/fonts/truetype/vlgothic',
+    '/usr/share/fonts/truetype/takao',
+    '/usr/share/fonts/truetype/takao-gothic',
+    '/usr/share/fonts/truetype/takao-mincho',
+    '/usr/share/fonts/opentype/ipafont',
+    '/usr/share/fonts/opentype/ipafont-gothic',
+    '/usr/share/fonts/opentype/ipafont-mincho',
+    '/usr/share/fonts/opentype/ipaexfont',
+    '/usr/share/fonts/opentype/ipaexfont-gothic',
+    '/usr/share/fonts/opentype/ipaexfont-mincho',
+    '/usr/share/fonts/truetype/unfonts-core',
+    '/usr/share/fonts/truetype/unfonts-extra',
+    '/usr/share/fonts/truetype/nanum',
+    '/usr/share/fonts/truetype/baekmuk',
+    '/usr/share/fonts/truetype/wqy',
+    '/usr/share/fonts/truetype/culmus',
+    '/usr/share/fonts/truetype/kacst',
+    '/usr/share/fonts/truetype/kacst-one',
+    '/usr/share/fonts/truetype/scheherazade',
+    '/usr/share/fonts/truetype/farsiweb',
+    '/usr/share/fonts/truetype/nafees',
+    '/usr/share/fonts/truetype/thabit',
+    '/usr/share/fonts/truetype/hosny-amiri',
+    '/usr/share/fonts/truetype/droid',
+    '/usr/share/fonts/truetype/roboto',
+    '/usr/share/fonts/truetype/roboto/unhinted',
+    '/usr/share/fonts/truetype/cantarell',
+    '/usr/share/fonts/truetype/open-sans',
+    '/usr/share/fonts/truetype/firacode',
+    '/usr/share/fonts/opentype/firacode',
+    '/usr/share/fonts/truetype/jetbrains-mono',
+    '/usr/share/fonts/truetype/inconsolata',
+    '/usr/share/fonts/truetype/mononoki',
+    '/usr/share/fonts/opentype/mathjax',
+    '/usr/share/fonts/opentype/stix',
+    '/usr/share/fonts/truetype/lyx',
+    '/usr/share/fonts/opentype/lyx',
+    '/usr/share/fonts/truetype/texgyre',
+    '/usr/share/fonts/opentype/texgyre',
+    '/usr/share/fonts/truetype',
+    '/usr/share/fonts/opentype',
+    '/usr/share/fonts',
     '/usr/local/share/fonts',
     'C:\\Windows\\Fonts',
 ];
 
-// Font family name mapping for registerFont
-const CANVAS_NAME_MAP = [
+// ── Map filename → clean family name for node-canvas ─────────────────────────
+const NAME_MAP = [
+    // ── ULTIMATE FALLBACKS (very wide coverage) ──────────────────────────────
+    { r: /unifont_upper/i,                n: 'Unifont Upper' },
+    { r: /[Uu]nifont/i,                   n: 'Unifont' },
+    { r: /Symbola/i,                      n: 'Symbola' },
+    { r: /DejaVuSansMono/i,               n: 'DejaVu Sans Mono' },
+    { r: /DejaVuSans-Bold/i,              n: 'DejaVu Sans' },
+    { r: /DejaVuSans(?!Mono|Condensed)/i, n: 'DejaVu Sans' },
+    { r: /DejaVuSerif/i,                  n: 'DejaVu Serif' },
+    { r: /LiberationSans/i,               n: 'Liberation Sans' },
+    { r: /LiberationSerif/i,              n: 'Liberation Serif' },
+    { r: /LiberationMono/i,               n: 'Liberation Mono' },
+    { r: /FreeSans/i,                     n: 'FreeSans' },
+    { r: /FreeSerif/i,                    n: 'FreeSerif' },
+    { r: /FreeMono/i,                     n: 'FreeMono' },
+    // ── NOTO SYMBOLS / MATH (must be before generic NotoSans) ────────────────
     { r: /NotoSansSymbols2/i,             n: 'Noto Sans Symbols2' },
     { r: /NotoSansSymbols/i,              n: 'Noto Sans Symbols' },
     { r: /NotoSansMath/i,                 n: 'Noto Sans Math' },
     { r: /NotoMusic/i,                    n: 'Noto Music' },
+    { r: /NotoColorEmoji/i,               n: 'Noto Color Emoji' },
+    // ── NOTO CJK ──────────────────────────────────────────────────────────────
+    { r: /NotoSansCJKsc/i,                n: 'Noto Sans CJK SC' },
+    { r: /NotoSansCJKtc/i,                n: 'Noto Sans CJK TC' },
+    { r: /NotoSansCJKjp/i,                n: 'Noto Sans CJK JP' },
+    { r: /NotoSansCJKkr/i,                n: 'Noto Sans CJK KR' },
     { r: /NotoSansCJK/i,                  n: 'Noto Sans CJK' },
     { r: /NotoSerifCJK/i,                 n: 'Noto Serif CJK' },
-    { r: /NotoColorEmoji/i,               n: 'Noto Color Emoji' },
-    { r: /NotoSansArabic/i,               n: 'Noto Sans Arabic' },
-    { r: /NotoSansDevanagari/i,           n: 'Noto Sans Devanagari' },
-    { r: /NotoSansBengali/i,              n: 'Noto Sans Bengali' },
-    { r: /NotoSansTamil/i,                n: 'Noto Sans Tamil' },
-    { r: /NotoSansTelugu/i,               n: 'Noto Sans Telugu' },
-    { r: /NotoSansKannada/i,              n: 'Noto Sans Kannada' },
-    { r: /NotoSansMalayalam/i,            n: 'Noto Sans Malayalam' },
-    { r: /NotoSansGujarati/i,             n: 'Noto Sans Gujarati' },
-    { r: /NotoSansGurmukhi/i,             n: 'Noto Sans Gurmukhi' },
-    { r: /NotoSansOriya/i,                n: 'Noto Sans Oriya' },
-    { r: /NotoSansSinhala/i,              n: 'Noto Sans Sinhala' },
-    { r: /NotoSansThai/i,                 n: 'Noto Sans Thai' },
-    { r: /NotoSansLao/i,                  n: 'Noto Sans Lao' },
-    { r: /NotoSansKhmer/i,                n: 'Noto Sans Khmer' },
-    { r: /NotoSansMyanmar/i,              n: 'Noto Sans Myanmar' },
-    { r: /NotoSansHebrew/i,               n: 'Noto Sans Hebrew' },
-    { r: /NotoSansSyriac/i,               n: 'Noto Sans Syriac' },
-    { r: /NotoSansThaana/i,               n: 'Noto Sans Thaana' },
-    { r: /NotoSansGeorgian/i,             n: 'Noto Sans Georgian' },
-    { r: /NotoSansArmenian/i,             n: 'Noto Sans Armenian' },
-    { r: /NotoSansEthiopic/i,             n: 'Noto Sans Ethiopic' },
-    { r: /NotoSansMongolian/i,            n: 'Noto Sans Mongolian' },
-    { r: /NotoSansRunic/i,                n: 'Noto Sans Runic' },
-    { r: /NotoSansOgham/i,                n: 'Noto Sans Ogham' },
-    { r: /NotoSansGothic/i,               n: 'Noto Sans Gothic' },
-    { r: /NotoSansOldItalic/i,            n: 'Noto Sans Old Italic' },
-    { r: /NotoSansCuneiform/i,            n: 'Noto Sans Cuneiform' },
-    { r: /NotoSansEgyptianHieroglyphs/i,  n: 'Noto Sans Egyptian Hieroglyphs' },
-    { r: /NotoSansDuployan/i,             n: 'Noto Sans Duployan' },
-    { r: /NotoSansLinearB/i,              n: 'Noto Sans Linear B' },
-    { r: /NotoSansLinearA/i,              n: 'Noto Sans Linear A' },
-    { r: /NotoSansPhoenician/i,           n: 'Noto Sans Phoenician' },
-    { r: /NotoSansOldPersian/i,           n: 'Noto Sans Old Persian' },
-    { r: /NotoSansOldTurkic/i,            n: 'Noto Sans Old Turkic' },
+    // ── NOTO SCRIPT-SPECIFIC (alphabetical) ──────────────────────────────────
     { r: /NotoSansAdlam/i,                n: 'Noto Sans Adlam' },
+    { r: /NotoSansAhom/i,                 n: 'Noto Sans Ahom' },
+    { r: /NotoSansAnatolianHieroglyphs/i, n: 'Noto Sans Anatolian Hieroglyphs' },
+    { r: /NotoSansArabicUI/i,             n: 'Noto Sans Arabic UI' },
+    { r: /NotoSansArabic/i,               n: 'Noto Sans Arabic' },
+    { r: /NotoSansArmenian/i,             n: 'Noto Sans Armenian' },
+    { r: /NotoSansAvestan/i,              n: 'Noto Sans Avestan' },
     { r: /NotoSansBalinese/i,             n: 'Noto Sans Balinese' },
     { r: /NotoSansBamum/i,                n: 'Noto Sans Bamum' },
+    { r: /NotoSansBassaVah/i,             n: 'Noto Sans Bassa Vah' },
     { r: /NotoSansBatak/i,                n: 'Noto Sans Batak' },
+    { r: /NotoSansBengaliUI/i,            n: 'Noto Sans Bengali UI' },
+    { r: /NotoSansBengali/i,              n: 'Noto Sans Bengali' },
+    { r: /NotoSansBhaiksuki/i,            n: 'Noto Sans Bhaiksuki' },
+    { r: /NotoSansBrahmi/i,               n: 'Noto Sans Brahmi' },
     { r: /NotoSansBuginese/i,             n: 'Noto Sans Buginese' },
+    { r: /NotoSansBuhid/i,                n: 'Noto Sans Buhid' },
+    { r: /NotoSansCanadianAboriginal/i,   n: 'Noto Sans Canadian Aboriginal' },
+    { r: /NotoSansCarian/i,               n: 'Noto Sans Carian' },
+    { r: /NotoSansCaucasianAlbanian/i,    n: 'Noto Sans Caucasian Albanian' },
     { r: /NotoSansChakma/i,               n: 'Noto Sans Chakma' },
     { r: /NotoSansCham/i,                 n: 'Noto Sans Cham' },
+    { r: /NotoSansCherokee/i,             n: 'Noto Sans Cherokee' },
+    { r: /NotoSansChorasmian/i,           n: 'Noto Sans Chorasmian' },
     { r: /NotoSansCoptic/i,               n: 'Noto Sans Coptic' },
+    { r: /NotoSansCuneiform/i,            n: 'Noto Sans Cuneiform' },
+    { r: /NotoSansCypriot/i,              n: 'Noto Sans Cypriot' },
+    { r: /NotoSansCyproMinoan/i,          n: 'Noto Sans Cypro Minoan' },
     { r: /NotoSansDeseret/i,              n: 'Noto Sans Deseret' },
+    { r: /NotoSansDevanagariUI/i,         n: 'Noto Sans Devanagari UI' },
+    { r: /NotoSansDevanagari/i,           n: 'Noto Sans Devanagari' },
+    { r: /NotoSansDogra/i,                n: 'Noto Sans Dogra' },
     { r: /NotoSansDuployan/i,             n: 'Noto Sans Duployan' },
+    { r: /NotoSansEgyptianHieroglyphs/i,  n: 'Noto Sans Egyptian Hieroglyphs' },
     { r: /NotoSansElbasan/i,              n: 'Noto Sans Elbasan' },
+    { r: /NotoSansElymaic/i,              n: 'Noto Sans Elymaic' },
+    { r: /NotoSansEthiopic/i,             n: 'Noto Sans Ethiopic' },
+    { r: /NotoSansGeorgian/i,             n: 'Noto Sans Georgian' },
     { r: /NotoSansGlagolitic/i,           n: 'Noto Sans Glagolitic' },
+    { r: /NotoSansGothic/i,               n: 'Noto Sans Gothic' },
+    { r: /NotoSansGrantha/i,              n: 'Noto Sans Grantha' },
+    { r: /NotoSansGujaratiUI/i,           n: 'Noto Sans Gujarati UI' },
+    { r: /NotoSansGujarati/i,             n: 'Noto Sans Gujarati' },
+    { r: /NotoSansGunjalaGondi/i,         n: 'Noto Sans Gunjala Gondi' },
+    { r: /NotoSansGurmukhiUI/i,           n: 'Noto Sans Gurmukhi UI' },
+    { r: /NotoSansGurmukhi/i,             n: 'Noto Sans Gurmukhi' },
     { r: /NotoSansHanifiRohingya/i,       n: 'Noto Sans Hanifi Rohingya' },
     { r: /NotoSansHanunoo/i,              n: 'Noto Sans Hanunoo' },
+    { r: /NotoSansHatran/i,               n: 'Noto Sans Hatran' },
+    { r: /NotoSansHebrew/i,               n: 'Noto Sans Hebrew' },
+    { r: /NotoSansImperialAramaic/i,      n: 'Noto Sans Imperial Aramaic' },
+    { r: /NotoSansIndicSiyaqNumbers/i,    n: 'Noto Sans Indic Siyaq Numbers' },
+    { r: /NotoSansInscriptionalPahlavi/i, n: 'Noto Sans Inscriptional Pahlavi' },
+    { r: /NotoSansInscriptionalParthian/i,n: 'Noto Sans Inscriptional Parthian' },
     { r: /NotoSansJavanese/i,             n: 'Noto Sans Javanese' },
+    { r: /NotoSansKaithi/i,               n: 'Noto Sans Kaithi' },
+    { r: /NotoSansKannadaUI/i,            n: 'Noto Sans Kannada UI' },
     { r: /NotoSansKannada/i,              n: 'Noto Sans Kannada' },
+    { r: /NotoSansKawi/i,                 n: 'Noto Sans Kawi' },
     { r: /NotoSansKayahLi/i,              n: 'Noto Sans Kayah Li' },
+    { r: /NotoSansKharoshthi/i,           n: 'Noto Sans Kharoshthi' },
+    { r: /NotoSansKhmer/i,                n: 'Noto Sans Khmer' },
+    { r: /NotoSansKhojki/i,               n: 'Noto Sans Khojki' },
+    { r: /NotoSansKhudawadi/i,            n: 'Noto Sans Khudawadi' },
+    { r: /NotoSansLao/i,                  n: 'Noto Sans Lao' },
     { r: /NotoSansLepcha/i,               n: 'Noto Sans Lepcha' },
     { r: /NotoSansLimbu/i,                n: 'Noto Sans Limbu' },
+    { r: /NotoSansLinearA/i,              n: 'Noto Sans Linear A' },
+    { r: /NotoSansLinearB/i,              n: 'Noto Sans Linear B' },
     { r: /NotoSansLisu/i,                 n: 'Noto Sans Lisu' },
+    { r: /NotoSansLycian/i,               n: 'Noto Sans Lycian' },
+    { r: /NotoSansLydian/i,               n: 'Noto Sans Lydian' },
+    { r: /NotoSansMahajani/i,             n: 'Noto Sans Mahajani' },
+    { r: /NotoSansMakasar/i,              n: 'Noto Sans Makasar' },
+    { r: /NotoSansMalayalamUI/i,          n: 'Noto Sans Malayalam UI' },
+    { r: /NotoSansMalayalam/i,            n: 'Noto Sans Malayalam' },
     { r: /NotoSansMandaic/i,              n: 'Noto Sans Mandaic' },
+    { r: /NotoSansManichaean/i,           n: 'Noto Sans Manichaean' },
     { r: /NotoSansMarchen/i,              n: 'Noto Sans Marchen' },
     { r: /NotoSansMasaramGondi/i,         n: 'Noto Sans Masaram Gondi' },
+    { r: /NotoSansMayanNumerals/i,        n: 'Noto Sans Mayan Numerals' },
+    { r: /NotoSansMedefaidrin/i,          n: 'Noto Sans Medefaidrin' },
     { r: /NotoSansMeeteiMayek/i,          n: 'Noto Sans Meetei Mayek' },
+    { r: /NotoSansMendeKikakui/i,         n: 'Noto Sans Mende Kikakui' },
+    { r: /NotoSansMeroitic/i,             n: 'Noto Sans Meroitic' },
     { r: /NotoSansMiao/i,                 n: 'Noto Sans Miao' },
+    { r: /NotoSansModi/i,                 n: 'Noto Sans Modi' },
+    { r: /NotoSansMongolian/i,            n: 'Noto Sans Mongolian' },
+    { r: /NotoSansMro/i,                  n: 'Noto Sans Mro' },
+    { r: /NotoSansMultani/i,              n: 'Noto Sans Multani' },
+    { r: /NotoSansMyanmarUI/i,            n: 'Noto Sans Myanmar UI' },
+    { r: /NotoSansMyanmar/i,              n: 'Noto Sans Myanmar' },
+    { r: /NotoSansNabataean/i,            n: 'Noto Sans Nabataean' },
+    { r: /NotoSansNandinagari/i,          n: 'Noto Sans Nandinagari' },
+    { r: /NotoSansNewTaiLue/i,            n: 'Noto Sans New Tai Lue' },
     { r: /NotoSansNewa/i,                 n: 'Noto Sans Newa' },
     { r: /NotoSansNKo/i,                  n: 'Noto Sans NKo' },
+    { r: /NotoSansNushuPua/i,             n: 'Noto Sans Nushu Pua' },
+    { r: /NotoSansNyiakengPuachueHmong/i, n: 'Noto Sans Nyiakeng Puachue Hmong' },
+    { r: /NotoSansOgham/i,                n: 'Noto Sans Ogham' },
     { r: /NotoSansOlChiki/i,              n: 'Noto Sans Ol Chiki' },
+    { r: /NotoSansOldHungarian/i,         n: 'Noto Sans Old Hungarian' },
+    { r: /NotoSansOldItalic/i,            n: 'Noto Sans Old Italic' },
+    { r: /NotoSansOldNorthArabian/i,      n: 'Noto Sans Old North Arabian' },
+    { r: /NotoSansOldPermic/i,            n: 'Noto Sans Old Permic' },
+    { r: /NotoSansOldPersian/i,           n: 'Noto Sans Old Persian' },
+    { r: /NotoSansOldSogdian/i,           n: 'Noto Sans Old Sogdian' },
+    { r: /NotoSansOldSouthArabian/i,      n: 'Noto Sans Old South Arabian' },
+    { r: /NotoSansOldTurkic/i,            n: 'Noto Sans Old Turkic' },
+    { r: /NotoSansOldUyghur/i,            n: 'Noto Sans Old Uyghur' },
+    { r: /NotoSansOriyaUI/i,              n: 'Noto Sans Oriya UI' },
+    { r: /NotoSansOriya/i,                n: 'Noto Sans Oriya' },
     { r: /NotoSansOsage/i,                n: 'Noto Sans Osage' },
     { r: /NotoSansOsmanya/i,              n: 'Noto Sans Osmanya' },
     { r: /NotoSansPahawhHmong/i,          n: 'Noto Sans Pahawh Hmong' },
+    { r: /NotoSansPalmyrene/i,            n: 'Noto Sans Palmyrene' },
+    { r: /NotoSansPauCinHau/i,            n: 'Noto Sans Pau Cin Hau' },
+    { r: /NotoSansPhagsPa/i,              n: 'Noto Sans Phags Pa' },
+    { r: /NotoSansPhoenician/i,           n: 'Noto Sans Phoenician' },
+    { r: /NotoSansPsalterPahlavi/i,       n: 'Noto Sans Psalter Pahlavi' },
     { r: /NotoSansRejang/i,               n: 'Noto Sans Rejang' },
+    { r: /NotoSansRunic/i,                n: 'Noto Sans Runic' },
     { r: /NotoSansSamaritan/i,            n: 'Noto Sans Samaritan' },
     { r: /NotoSansSaurashtra/i,           n: 'Noto Sans Saurashtra' },
+    { r: /NotoSansSharada/i,              n: 'Noto Sans Sharada' },
     { r: /NotoSansShavian/i,              n: 'Noto Sans Shavian' },
+    { r: /NotoSansSiddham/i,              n: 'Noto Sans Siddham' },
     { r: /NotoSansSignWriting/i,          n: 'Noto Sans SignWriting' },
+    { r: /NotoSansSinhalaUI/i,            n: 'Noto Sans Sinhala UI' },
+    { r: /NotoSansSinhala/i,              n: 'Noto Sans Sinhala' },
+    { r: /NotoSansSogdian/i,              n: 'Noto Sans Sogdian' },
+    { r: /NotoSansSoraSompeng/i,          n: 'Noto Sans Sora Sompeng' },
     { r: /NotoSansSoyombo/i,              n: 'Noto Sans Soyombo' },
     { r: /NotoSansSundanese/i,            n: 'Noto Sans Sundanese' },
     { r: /NotoSansSylotiNagri/i,          n: 'Noto Sans Syloti Nagri' },
+    { r: /NotoSansSyriac/i,               n: 'Noto Sans Syriac' },
     { r: /NotoSansTagalog/i,              n: 'Noto Sans Tagalog' },
     { r: /NotoSansTagbanwa/i,             n: 'Noto Sans Tagbanwa' },
     { r: /NotoSansTaiLe/i,                n: 'Noto Sans Tai Le' },
     { r: /NotoSansTaiTham/i,              n: 'Noto Sans Tai Tham' },
     { r: /NotoSansTaiViet/i,              n: 'Noto Sans Tai Viet' },
+    { r: /NotoSansTakri/i,                n: 'Noto Sans Takri' },
+    { r: /NotoSansTamilSupplement/i,      n: 'Noto Sans Tamil Supplement' },
+    { r: /NotoSansTamilUI/i,              n: 'Noto Sans Tamil UI' },
+    { r: /NotoSansTamil/i,                n: 'Noto Sans Tamil' },
+    { r: /NotoSansTangsa/i,               n: 'Noto Sans Tangsa' },
+    { r: /NotoSansTeluguUI/i,             n: 'Noto Sans Telugu UI' },
+    { r: /NotoSansTelugu/i,               n: 'Noto Sans Telugu' },
+    { r: /NotoSansThaana/i,               n: 'Noto Sans Thaana' },
+    { r: /NotoSansThai/i,                 n: 'Noto Sans Thai' },
     { r: /NotoSansTifinagh/i,             n: 'Noto Sans Tifinagh' },
+    { r: /NotoSansTirhuta/i,              n: 'Noto Sans Tirhuta' },
+    { r: /NotoSansToto/i,                 n: 'Noto Sans Toto' },
     { r: /NotoSansUgaritic/i,             n: 'Noto Sans Ugaritic' },
     { r: /NotoSansVai/i,                  n: 'Noto Sans Vai' },
+    { r: /NotoSansVithkuqi/i,             n: 'Noto Sans Vithkuqi' },
     { r: /NotoSansWancho/i,               n: 'Noto Sans Wancho' },
+    { r: /NotoSansWarangCiti/i,           n: 'Noto Sans Warang Citi' },
     { r: /NotoSansYi/i,                   n: 'Noto Sans Yi' },
     { r: /NotoSansZanabazarSquare/i,      n: 'Noto Sans Zanabazar Square' },
     { r: /NotoSerifTangut/i,              n: 'Noto Serif Tangut' },
     { r: /NotoSerifTibetan/i,             n: 'Noto Serif Tibetan' },
+    { r: /NotoSerifYezidi/i,              n: 'Noto Serif Yezidi' },
     { r: /NotoTraditionalNushu/i,         n: 'Noto Traditional Nushu' },
-    // Generic must be last
+    { r: /NotoLoopedLao/i,                n: 'Noto Looped Lao' },
+    { r: /NotoLoopedThai/i,               n: 'Noto Looped Thai' },
+    { r: /NotoRashiHebrew/i,              n: 'Noto Rashi Hebrew' },
+    // ── GENERIC NOTO (must be after specific ones) ───────────────────────────
     { r: /NotoSans/i,                     n: 'Noto Sans' },
     { r: /NotoSerif/i,                    n: 'Noto Serif' },
     { r: /NotoMono/i,                     n: 'Noto Mono' },
+    // ── OTHER SCRIPT-SPECIFIC FONTS ──────────────────────────────────────────
+    { r: /Padauk/i,                       n: 'Padauk' },
+    { r: /Scheherazade/i,                 n: 'Scheherazade' },
+    { r: /Amiri/i,                        n: 'Amiri' },
+    { r: /Lateef/i,                       n: 'Lateef' },
+    { r: /Charis/i,                       n: 'Charis SIL' },
+    { r: /Gentium/i,                      n: 'Gentium' },
+    { r: /Andika/i,                       n: 'Andika' },
+    { r: /Doulos/i,                       n: 'Doulos SIL' },
+    { r: /Abyssinica/i,                   n: 'Abyssinica SIL' },
+    { r: /Ezra/i,                         n: 'Ezra SIL' },
+    { r: /KhmerOS/i,                      n: 'Khmer OS' },
+    { r: /Phetsarath/i,                   n: 'Phetsarath' },
+    { r: /Lohit/i,                        n: 'Lohit' },
+    { r: /Samyak/i,                       n: 'Samyak' },
+    { r: /Yrsa|Rasa/i,                    n: 'Yrsa' },
+    { r: /SaraiBold|Sarai/i,              n: 'Sarai' },
+    { r: /Meera/i,                        n: 'Meera' },
+    { r: /Rachana/i,                      n: 'Rachana' },
+    { r: /AnjaliOldLipi/i,                n: 'AnjaliOldLipi' },
+    { r: /TibMachUni/i,                   n: 'TibMachUni' },
+    { r: /[Kk]inn?ari/i,                  n: 'Kinnari' },
+    { r: /[Gg]aruda/i,                    n: 'Garuda' },
+    { r: /[Ll]aksaman/i,                  n: 'Laksaman' },
+    { r: /[Pp]urisa/i,                    n: 'Purisa' },
+    { r: /[Nn]orasi/i,                    n: 'Norasi' },
+    { r: /[Ss]awasdee/i,                  n: 'Sawasdee' },
+    { r: /[Ww]aree/i,                     n: 'Waree' },
+    { r: /[Uu]mpush/i,                    n: 'Umpush' },
+    { r: /Loma/i,                         n: 'Loma' },
+    { r: /[Tt]akao/i,                     n: 'Takao' },
+    { r: /VL[- ]Gothic|VLGothic/i,        n: 'VL Gothic' },
+    { r: /IPAGothic|IPAex.*Gothic/i,      n: 'IPAGothic' },
+    { r: /IPAMincho|IPAex.*Mincho/i,      n: 'IPAMincho' },
+    { r: /UnBatang/i,                     n: 'UnBatang' },
+    { r: /UnDotum/i,                      n: 'UnDotum' },
+    { r: /Baekmuk/i,                      n: 'Baekmuk' },
+    { r: /[Nn]anum/i,                     n: 'Nanum Gothic' },
+    { r: /[Aa][Rr][Pp][Ll].*Uming/i,      n: 'AR PL UMing' },
+    { r: /[Aa][Rr][Pp][Ll].*Ukai/i,       n: 'AR PL UKai' },
+    { r: /WenQuanYi.*Micro/i,             n: 'WenQuanYi Micro Hei' },
+    { r: /WenQuanYi.*Zen/i,               n: 'WenQuanYi Zen Hei' },
+    { r: /Mukti/i,                        n: 'Mukti' },
+    { r: /Roboto/i,                       n: 'Roboto' },
+    { r: /OpenSans/i,                     n: 'Open Sans' },
+    { r: /[Cc]antarell/i,                 n: 'Cantarell' },
+    { r: /FiraCode/i,                     n: 'Fira Code' },
+    { r: /JetBrainsMono/i,                n: 'JetBrains Mono' },
+    { r: /Inconsolata/i,                  n: 'Inconsolata' },
+    { r: /Mononoki/i,                     n: 'Mononoki' },
+    { r: /STIX/i,                         n: 'STIX' },
+    { r: /MathJax/i,                      n: 'MathJax' },
+    // ── WINDOWS LOCAL DEV ─────────────────────────────────────────────────────
     { r: /seguisym/i,                     n: 'Segoe UI Symbol' },
     { r: /seguiemj/i,                     n: 'Segoe UI Emoji' },
     { r: /arial/i,                        n: 'Arial' },
 ];
 
+// ── Bitmap-only fonts that crash some renderers — skip them ──────────────────
+const SKIP_PATTERNS = [
+    /\.ttc$/i,
+];
+
 function deriveCanvasName(filename) {
-    for (const rule of CANVAS_NAME_MAP) {
+    for (const rule of NAME_MAP) {
         if (rule.r.test(filename)) return rule.n;
     }
-    return 'Noto Sans';
+    return path.basename(filename, path.extname(filename))
+        .replace(/[-_](Regular|Bold|Italic|Light|Medium|Thin|Black|SemiBold|ExtraBold|Heavy)/gi, '')
+        .replace(/[-_]/g, ' ').trim() || 'Generic';
 }
 
-// Register all system fonts with node-canvas at startup
-// Canvas uses Pango/FreeType which handles ALL scripts natively
-// This means names rendered via canvas will NEVER show tofu
+// ── Register every font found on the system ──────────────────────────────────
 ;(function registerAllFonts() {
     const loaded = new Set();
-    let count = 0;
+    let count = 0, skipped = 0;
+    const startTime = Date.now();
+
     for (const dir of SCAN_DIRS) {
         if (!fs.existsSync(dir)) continue;
         let files;
         try { files = fs.readdirSync(dir); } catch { continue; }
         for (const file of files) {
             if (!/\.(ttf|otf)$/i.test(file)) continue;
+            if (SKIP_PATTERNS.some(p => p.test(file))) { skipped++; continue; }
+
             const fullPath = path.join(dir, file);
             if (loaded.has(fullPath)) continue;
             loaded.add(fullPath);
+
             try {
                 registerFont(fullPath, { family: deriveCanvasName(file) });
                 count++;
-            } catch (_) {}
+            } catch (_) { skipped++; }
         }
     }
-    console.log(`✅ Registered ${count} fonts with node-canvas`);
+
+    const elapsed = Date.now() - startTime;
+    console.log(`✅ Registered ${count} fonts with node-canvas in ${elapsed}ms`);
+    console.log(`⏭️  Skipped ${skipped} incompatible files`);
 })();
 
-// Canvas font stack — all families registered above are available
-const CANVAS_FONT = [
-    'Noto Sans', 'Noto Sans Symbols2', 'Noto Sans Symbols',
-    'Noto Sans Math', 'Noto Music',
-    'Noto Sans CJK', 'Noto Sans Arabic', 'Noto Sans Devanagari',
-    'Noto Sans Bengali', 'Noto Sans Tamil', 'Noto Sans Telugu',
-    'Noto Sans Thai', 'Noto Sans Hebrew', 'Noto Sans Georgian',
-    'Noto Sans Armenian', 'Noto Sans Ethiopic', 'Noto Sans Mongolian',
-    'Noto Sans Runic', 'Noto Sans Gothic', 'Noto Sans Cuneiform',
-    'Noto Sans Egyptian Hieroglyphs', 'Noto Sans Duployan',
+// ── Font stack for both canvas and CSS ───────────────────────────────────────
+// Order matters: Pango tries each font in order for each character
+const FONT_STACK_ARRAY = [
+    // Base Latin fonts
+    'Noto Sans', 'DejaVu Sans', 'Liberation Sans', 'FreeSans',
+    // Symbol fonts (catches fancy text characters)
+    'Noto Sans Math', 'Noto Sans Symbols2', 'Noto Sans Symbols',
+    'Symbola', 'Noto Music',
+    // CJK
+    'Noto Sans CJK', 'Noto Sans CJK SC', 'Noto Sans CJK JP',
+    'Noto Sans CJK KR', 'WenQuanYi Micro Hei', 'AR PL UMing',
+    'VL Gothic', 'IPAGothic', 'Nanum Gothic', 'UnBatang',
+    // Arabic family
+    'Noto Sans Arabic', 'Amiri', 'Scheherazade', 'Lateef',
+    // Indic
+    'Noto Sans Devanagari', 'Noto Sans Bengali', 'Noto Sans Tamil',
+    'Noto Sans Telugu', 'Noto Sans Kannada', 'Noto Sans Malayalam',
+    'Noto Sans Gujarati', 'Noto Sans Gurmukhi', 'Noto Sans Oriya',
+    'Noto Sans Sinhala', 'Lohit', 'Samyak', 'Padauk',
+    // Southeast Asian
+    'Noto Sans Thai', 'Noto Sans Lao', 'Noto Sans Khmer',
+    'Noto Sans Myanmar', 'Khmer OS', 'Garuda', 'Kinnari',
+    // Other living scripts
+    'Noto Sans Hebrew', 'Noto Sans Syriac', 'Noto Sans Thaana',
+    'Noto Sans Georgian', 'Noto Sans Armenian', 'Noto Sans Ethiopic',
+    'Noto Sans Mongolian', 'Noto Serif Tibetan', 'TibMachUni',
+    'Noto Sans Cherokee', 'Noto Sans Canadian Aboriginal',
+    'Noto Sans Tifinagh', 'Noto Sans Vai', 'Noto Sans NKo',
+    'Noto Sans Adlam', 'Noto Sans Bamum', 'Abyssinica SIL',
+    // Historic / ancient
+    'Noto Sans Runic', 'Noto Sans Ogham', 'Noto Sans Gothic',
+    'Noto Sans Old Italic', 'Noto Sans Old Persian',
+    'Noto Sans Old Turkic', 'Noto Sans Phoenician',
+    'Noto Sans Ugaritic', 'Noto Sans Cuneiform',
+    'Noto Sans Egyptian Hieroglyphs', 'Noto Sans Linear A',
+    'Noto Sans Linear B', 'Noto Sans Glagolitic',
+    'Noto Sans Imperial Aramaic', 'Noto Sans Nabataean',
+    'Noto Sans Avestan', 'Noto Sans Brahmi', 'Noto Sans Carian',
+    'Noto Sans Lycian', 'Noto Sans Lydian',
+    // Rare/uncommon scripts (the "cool name" fonts)
+    'Noto Sans Duployan', 'Noto Sans SignWriting',
+    'Noto Sans Deseret', 'Noto Sans Shavian', 'Noto Sans Osmanya',
+    'Noto Sans Osage', 'Noto Sans Elbasan', 'Noto Sans Coptic',
+    'Noto Sans Hanifi Rohingya',
+    // ABSOLUTE LAST RESORT — guarantees no tofu
+    'Unifont Upper', 'Unifont',
+    // Generic fallback
     'sans-serif'
-].map(f => `'${f}'`).join(', ');
+];
+
+const CANVAS_FONT = FONT_STACK_ARRAY.map(f => `'${f}'`).join(', ');
+const CSS_FONT    = FONT_STACK_ARRAY.map(f => `'${f}'`).join(',');
 
 // =============================================================================
-// SHARED BROWSER — created once, reused for every request
-// This is the #1 speed optimization: browser startup = ~2s, reuse = ~0ms
+// BROWSER POOL
 // =============================================================================
 let sharedBrowser = null;
 let browserLock   = false;
 
 async function getBrowser() {
-    // If browser exists and is still connected, return it immediately
     if (sharedBrowser && sharedBrowser.connected) return sharedBrowser;
-
-    // Simple lock to prevent multiple simultaneous launches
     if (browserLock) {
-        // Wait for the other launch to finish
         await new Promise(r => setTimeout(r, 100));
         return getBrowser();
     }
-
     browserLock = true;
     try {
         console.log('🌐 Launching Chromium browser...');
@@ -197,24 +473,14 @@ async function getBrowser() {
             headless: true,
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
             args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-gpu',
-                '--disable-dev-shm-usage',
-                '--no-zygote',
-                '--single-process',
-                '--hide-scrollbars',
-                '--disable-web-security',
-                // Performance: disable unused features
-                '--disable-extensions',
-                '--disable-background-networking',
-                '--disable-default-apps',
-                '--disable-sync',
-                '--disable-translate',
-                '--metrics-recording-only',
-                '--no-first-run',
-                '--safebrowsing-disable-auto-update',
-                // Memory: reduce footprint
+                '--no-sandbox', '--disable-setuid-sandbox',
+                '--disable-gpu', '--disable-dev-shm-usage',
+                '--no-zygote', '--single-process',
+                '--hide-scrollbars', '--disable-web-security',
+                '--disable-extensions', '--disable-background-networking',
+                '--disable-default-apps', '--disable-sync',
+                '--disable-translate', '--metrics-recording-only',
+                '--no-first-run', '--safebrowsing-disable-auto-update',
                 '--js-flags=--max-old-space-size=512',
             ]
         });
@@ -223,59 +489,34 @@ async function getBrowser() {
             sharedBrowser = null;
         });
         console.log('✅ Browser ready');
-    } finally {
-        browserLock = false;
-    }
+    } finally { browserLock = false; }
     return sharedBrowser;
 }
 
-// Pre-warm browser at startup so first request is fast
+// Pre-warm at module load
 getBrowser().catch(e => console.error('⚠️  Browser pre-warm failed:', e.message));
 
 // =============================================================================
-// PAGE POOL — reuse pages instead of creating/closing per request
-// Creating a new page costs ~100-200ms. Reusing a pooled page costs ~0ms.
+// PAGE POOL
 // =============================================================================
 const PAGE_POOL     = [];
-const PAGE_POOL_MAX = 3; // max concurrent pages
+const PAGE_POOL_MAX = 3;
 
 async function acquirePage() {
-    // Return a free page from pool if available
     if (PAGE_POOL.length > 0) {
         const page = PAGE_POOL.pop();
-        // Make sure it's still usable
-        try {
-            await page.evaluate(() => true);
-            return page;
-        } catch {
-            // Page is dead, create a new one
-        }
+        try { await page.evaluate(() => true); return page; }
+        catch { /* dead page, create new */ }
     }
-    // Create a new page
     const browser = await getBrowser();
     const page    = await browser.newPage();
 
-    // Disable images/css/fonts from EXTERNAL sources for speed
-    // We use base64 data URIs for everything so this is safe
     await page.setRequestInterception(true);
     page.on('request', req => {
         const url = req.url();
-        // Block external requests EXCEPT emoji CDN (we need those images)
-        if (
-            url.startsWith('data:') ||
-            url.includes('cdn.jsdelivr.net') ||
-            url.includes('fonts.gstatic.com')
-        ) {
-            req.continue();
-        } else if (
-            url.startsWith('http') &&
-            !url.includes('cdn.jsdelivr.net')
-        ) {
-            // Block Google Fonts and other external CSS/JS — we use inline CSS
-            req.abort();
-        } else {
-            req.continue();
-        }
+        if (url.startsWith('data:') || url.includes('cdn.jsdelivr.net')) req.continue();
+        else if (url.startsWith('http')) req.abort();
+        else req.continue();
     });
 
     await page.setViewport({ width: 5000, height: 5000, deviceScaleFactor: 1 });
@@ -283,11 +524,17 @@ async function acquirePage() {
 }
 
 function releasePage(page) {
-    if (PAGE_POOL.length < PAGE_POOL_MAX) {
-        PAGE_POOL.push(page);
-    } else {
-        page.close().catch(() => {});
-    }
+    if (PAGE_POOL.length < PAGE_POOL_MAX) PAGE_POOL.push(page);
+    else page.close().catch(() => {});
+}
+
+// =============================================================================
+// BOT TOKEN CHECK
+// =============================================================================
+const BOT_TOKEN = process.env.BOT_TOKEN;
+if (!BOT_TOKEN) {
+    console.error('❌ FATAL: BOT_TOKEN is missing in environment variables.');
+    process.exit(1);
 }
 
 // =============================================================================
@@ -312,10 +559,7 @@ function escapeHtml(t) {
 }
 
 // =============================================================================
-// NAME RENDERING — canvas → base64 PNG
-// node-canvas uses Pango which calls into FreeType + system fonts.
-// Every font we registered above is available here.
-// Result: names with ANY Unicode script render perfectly with NO tofu.
+// NAME RENDERING via canvas
 // =============================================================================
 function renderChunkImg(text, fontSize, color) {
     const tmp = createCanvas(1, 1);
@@ -346,9 +590,7 @@ function nameToHtml(text, color, fontSize) {
         if (IS_EMOJI.test(c)) {
             flushChunk();
             res += `<img src="${toAppleEmojiUrl(c)}" class="emoji" onerror="this.style.display='none'"/>`;
-        } else {
-            chunk += c;
-        }
+        } else { chunk += c; }
     }
     flushChunk();
     return res;
@@ -361,14 +603,9 @@ function toAppleEmojiUrl(emoji) {
     const r = []; let c = 0, p = 0;
     for (let i = 0; i < emoji.length; i++) {
         c = emoji.charCodeAt(i);
-        if (p) {
-            r.push((0x10000 + ((p - 0xD800) << 10) + (c - 0xDC00)).toString(16));
-            p = 0;
-        } else if (0xD800 <= c && c <= 0xDBFF) {
-            p = c;
-        } else {
-            r.push(c.toString(16));
-        }
+        if (p) { r.push((0x10000 + ((p - 0xD800) << 10) + (c - 0xDC00)).toString(16)); p = 0; }
+        else if (0xD800 <= c && c <= 0xDBFF) p = c;
+        else r.push(c.toString(16));
     }
     let cp = r.join('-');
     if (!cp.includes('200d')) cp = cp.replace(/-fe0f/g, '');
@@ -385,7 +622,6 @@ const ECACHE = new Map();
 async function getPremiumEmojiB64(id) {
     if (ECACHE.has(id)) return ECACHE.get(id);
     try {
-        const BOT_TOKEN = process.env.BOT_TOKEN;
         const { data: d1 } = await axios.post(
             `https://api.telegram.org/bot${BOT_TOKEN}/getCustomEmojiStickers`,
             { custom_emoji_ids: [id] }, { timeout: 5000 }
@@ -406,7 +642,7 @@ async function getPremiumEmojiB64(id) {
 }
 
 // =============================================================================
-// MESSAGE HTML BUILDER — unchanged from your original working version
+// MESSAGE HTML BUILDER
 // =============================================================================
 async function msgToHtml(text, entities = []) {
     if (!text) return '';
@@ -437,10 +673,7 @@ async function msgToHtml(text, entities = []) {
 
     for (let i = 0; i < tags.length; i++) {
         const t = tags[i];
-        if (t.pos > cursor) {
-            html += applyText(text.substring(cursor, t.pos));
-            cursor = t.pos;
-        }
+        if (t.pos > cursor) { html += applyText(text.substring(cursor, t.pos)); cursor = t.pos; }
         if (t.type === 'open') {
             const e = t.info;
             if (['url','text_url','mention','bot_command'].includes(e.type)) {
@@ -490,14 +723,10 @@ async function dummyAvatar(f, l, color) {
     const cv  = createCanvas(S, S);
     const ctx = cv.getContext('2d');
     ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle    = '#fff';
-    ctx.font         = `bold ${S * 0.38}px ${CANVAS_FONT}`;
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(((f?.[0] || '') + (l?.[0] || '')).toUpperCase().substring(0, 2) || '?', S / 2, S / 2);
+    ctx.beginPath(); ctx.arc(S/2, S/2, S/2, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = `bold ${S*0.38}px ${CANVAS_FONT}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(((f?.[0]||'')+(l?.[0]||'')).toUpperCase().substring(0,2)||'?', S/2, S/2);
     return cv.toBuffer('image/png');
 }
 
@@ -509,8 +738,6 @@ async function createImage(
     nameColorId, inputImageBuffer, replySender, replyMessage,
     replysendercolor, messageEntities = []
 ) {
-    const BOT_TOKEN = process.env.BOT_TOKEN;
-
     let msgList = Array.isArray(firstName)
         ? firstName
         : [{
@@ -524,7 +751,6 @@ async function createImage(
     const NAME_FS = 16 * SCALE;
     const MSG_FS  = 16 * SCALE;
 
-    // ── Pre-process all messages in parallel ──────────────────────────────────
     const rows = await Promise.all(msgList.map(async (d) => {
         const name    = `${d.firstName || ''} ${d.lastName || ''}`.trim() || 'User';
         const color   = getTelegramColor(d.nameColorId);
@@ -559,7 +785,6 @@ async function createImage(
         };
     }));
 
-    // ── Compute message grouping ──────────────────────────────────────────────
     const items = rows.map((m, i) => {
         const prev = rows[i - 1], next = rows[i + 1];
         const samePrev = prev && prev.userId === m.userId && !m.fName;
@@ -574,11 +799,10 @@ async function createImage(
 
     const MSG_IN = '#111112';
 
-    // ── CSS — identical to your original, NO changes to layout/styling ────────
     const css = `
 :root { --r: ${20 * SCALE}px; --rs: ${5 * SCALE}px; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Noto Sans','Noto Sans Symbols2','Noto Sans Symbols','Noto Sans CJK','Noto Sans Arabic','Noto Sans Devanagari',sans-serif; background: transparent; -webkit-font-smoothing: antialiased; }
+body { font-family: ${CSS_FONT}; background: transparent; -webkit-font-smoothing: antialiased; }
 #wrap { display: inline-flex; flex-direction: column; gap: 0; padding: ${30 * SCALE}px; background: transparent; }
 .bubble-container { display: flex; align-items: flex-end; position: relative; width: max-content; min-width: ${100 * SCALE}px; max-width: ${400 * SCALE}px; margin: ${2 * SCALE}px ${10 * SCALE}px; gap: ${6 * SCALE}px; }
 .bubble-container.sender-break { margin-top: ${10 * SCALE}px; }
@@ -604,13 +828,12 @@ body { font-family: 'Noto Sans','Noto Sans Symbols2','Noto Sans Symbols','Noto S
 .reply-text { font-size: ${MSG_FS * 0.7}px; color: #7f91a4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .emoji { height: 1.2em; width: 1.2em; vertical-align: middle; }
 .msg-emoji { height: 1.3em; width: 1.3em; vertical-align: middle; }
-code { font-family: 'Consolas', 'Courier New', monospace; background: rgba(255,255,255,0.1); padding: 0.1em 0.3em; border-radius: 4px; font-size: 0.9em; }
-pre { font-family: 'Consolas', 'Courier New', monospace; background: rgba(255,255,255,0.08); padding: 8px; border-radius: 6px; margin: 4px 0; display: block; white-space: pre-wrap; word-break: break-all; font-size: 0.85em; border-left: 3px solid rgba(255,255,255,0.2); }
+code { font-family: 'JetBrains Mono','Fira Code','Consolas','Courier New',monospace; background: rgba(255,255,255,0.1); padding: 0.1em 0.3em; border-radius: 4px; font-size: 0.9em; }
+pre { font-family: 'JetBrains Mono','Fira Code','Consolas','Courier New',monospace; background: rgba(255,255,255,0.08); padding: 8px; border-radius: 6px; margin: 4px 0; display: block; white-space: pre-wrap; word-break: break-all; font-size: 0.85em; border-left: 3px solid rgba(255,255,255,0.2); }
 .spoiler { background: rgba(255,255,255,0.15); color: transparent; border-radius: 4px; filter: blur(5px); }
 .blockquote { display: block; border-left: 3px solid #64b5f6; padding-left: 10px; margin: 4px 0; font-style: italic; color: #7f91a4; }
 `;
 
-    // ── Build HTML body — identical structure to your original ────────────────
     const htmlBody = items.map(m => {
         let bInner = '';
         if (m.isSticker) {
@@ -631,8 +854,6 @@ pre { font-family: 'Consolas', 'Courier New', monospace; background: rgba(255,25
 </div>`;
     }).join('');
 
-    // ── Full HTML — NO external font requests (all fonts are system/inline) ───
-    // Removed Google Fonts link — that was causing networkidle0 to wait ~500ms
     const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -644,26 +865,20 @@ pre { font-family: 'Consolas', 'Courier New', monospace; background: rgba(255,25
 </body>
 </html>`;
 
-    // ── Render via Puppeteer ──────────────────────────────────────────────────
     console.log('🎨 Starting Puppeteer render...');
     const t0   = Date.now();
     const page = await acquirePage();
 
     try {
-        // Use domcontentloaded instead of networkidle0 — MUCH faster
-        // All our content is inline (base64) so there's nothing to wait for
-        // EXCEPT emoji images from CDN — we handle those with waitForSelector
         await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 15000 });
 
-        // Wait for emoji images to load (they come from CDN)
-        // Use a short timeout — if CDN is slow we still render
         await page.evaluate(() => {
             return new Promise(resolve => {
                 const imgs = [...document.querySelectorAll('img')];
                 if (imgs.length === 0) return resolve();
                 let loaded = 0;
                 const done = () => { if (++loaded >= imgs.length) resolve(); };
-                const timeout = setTimeout(resolve, 3000); // max 3s wait
+                setTimeout(resolve, 3000);
                 imgs.forEach(img => {
                     if (img.complete) done();
                     else { img.onload = done; img.onerror = done; }
@@ -674,11 +889,7 @@ pre { font-family: 'Consolas', 'Courier New', monospace; background: rgba(255,25
         const element = await page.$('#wrap');
         if (!element) throw new Error('Could not find #wrap element');
 
-        const screenshot = await element.screenshot({
-            omitBackground: true,
-            type: 'png',
-        });
-
+        const screenshot = await element.screenshot({ omitBackground: true, type: 'png' });
         console.log(`✅ Puppeteer render done in ${Date.now() - t0}ms`);
 
         return await sharp(screenshot)
@@ -688,16 +899,12 @@ pre { font-family: 'Consolas', 'Courier New', monospace; background: rgba(255,25
             .toBuffer();
 
     } finally {
-        // Return page to pool instead of closing it
         releasePage(page);
     }
 }
 
 module.exports = createImage;
 
-// =============================================================================
-// HEALTH CHECK SERVER
-// =============================================================================
 if (require.main === module) {
     const http = require('http');
     const port = process.env.PORT || 7860;
