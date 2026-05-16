@@ -9,25 +9,194 @@ const sharp = require('sharp');
 const axios = require('axios');
 
 // --- MULTI-FONT LOADER ---
+// --- MULTI-FONT LOADER ---
+// Scans every known Noto directory on the system and loads all .ttf/.otf files.
+// The order matters for Satori's fallback: first match wins per codepoint.
 function loadFonts() {
     const families = [];
-    const paths = [
-        { name: 'Noto Sans', path: '/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf', weight: 600 },
-        { name: 'Noto Sans', path: '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf', weight: 400 },
-        { name: 'Noto Symbols', path: '/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf', weight: 400 },
-        { name: 'Arial', path: 'C:\\Windows\\Fonts\\arial.ttf', weight: 400 },
-        { name: 'Segoe UI Symbol', path: 'C:\\Windows\\Fonts\\seguisym.ttf', weight: 400 }
+
+    // ── Ordered list of directories to scan ──────────────────────────────────
+    // We put the hand-downloaded extras FIRST so they take priority over the
+    // smaller apt-installed subset, then fall through to anything else found.
+    const scanDirs = [
+        '/usr/share/fonts/truetype/noto-extra',   // our wget'd full Noto stack
+        '/usr/share/fonts/truetype/noto',          // apt fonts-noto base
+        '/usr/share/fonts/opentype/noto',          // apt CJK (opentype)
+        '/usr/share/fonts/truetype/noto-cjk',
+        '/usr/share/fonts/opentype/noto-cjk',
+        '/usr/share/fonts/noto',
+        '/usr/share/fonts/noto-cjk',
+        '/usr/local/share/fonts',
+        // Windows paths (for local dev)
+        'C:\\Windows\\Fonts',
     ];
 
-    paths.forEach(f => {
-        if (fs.existsSync(f.path)) {
-            families.push({ name: f.name, data: fs.readFileSync(f.path), weight: f.weight, style: 'normal' });
-            try { registerFont(f.path, { family: f.name }); } catch {}
-            console.log(`✅ Loaded font: ${f.name} from ${f.path}`);
+    // ── Map raw filename keywords → a clean Satori font-family name ──────────
+    // Satori needs a "name" to group weights/styles together.
+    // Any file not matched falls back to a name derived from its filename.
+    const NAME_MAP = [
+        // CJK first – largest coverage for CJK codepoints
+        { match: /NotoSansCJK|NotoSerifCJK/i,          name: 'Noto Sans CJK' },
+        // Noto Color Emoji
+        { match: /NotoColorEmoji/i,                     name: 'Noto Color Emoji' },
+        // Script-specific Noto faces (order = fallback priority)
+        { match: /NotoSansArabic/i,                     name: 'Noto Sans Arabic' },
+        { match: /NotoSansDevanagari/i,                 name: 'Noto Sans Devanagari' },
+        { match: /NotoSansThai/i,                       name: 'Noto Sans Thai' },
+        { match: /NotoSansHebrew/i,                     name: 'Noto Sans Hebrew' },
+        { match: /NotoSansBengali/i,                    name: 'Noto Sans Bengali' },
+        { match: /NotoSansTamil/i,                      name: 'Noto Sans Tamil' },
+        { match: /NotoSansTelugu/i,                     name: 'Noto Sans Telugu' },
+        { match: /NotoSansKannada/i,                    name: 'Noto Sans Kannada' },
+        { match: /NotoSansMalayalam/i,                  name: 'Noto Sans Malayalam' },
+        { match: /NotoSansGeorgian/i,                   name: 'Noto Sans Georgian' },
+        { match: /NotoSansArmenian/i,                   name: 'Noto Sans Armenian' },
+        { match: /NotoSansEthiopic/i,                   name: 'Noto Sans Ethiopic' },
+        { match: /NotoSansKhmer/i,                      name: 'Noto Sans Khmer' },
+        { match: /NotoSansMyanmar/i,                    name: 'Noto Sans Myanmar' },
+        { match: /NotoSansMongolian/i,                  name: 'Noto Sans Mongolian' },
+        { match: /NotoSansSinhala/i,                    name: 'Noto Sans Sinhala' },
+        { match: /NotoSansLao/i,                        name: 'Noto Sans Lao' },
+        { match: /NotoSerifTibetan/i,                   name: 'Noto Serif Tibetan' },
+        { match: /NotoSansDuployan/i,                   name: 'Noto Sans Duployan' },
+        { match: /NotoSansBalinese/i,                   name: 'Noto Sans Balinese' },
+        { match: /NotoSansJavanese/i,                   name: 'Noto Sans Javanese' },
+        { match: /NotoSansSundanese/i,                  name: 'Noto Sans Sundanese' },
+        { match: /NotoTraditionalNushu/i,               name: 'Noto Traditional Nushu' },
+        { match: /NotoSansSignWriting/i,                name: 'Noto Sans SignWriting' },
+        // Symbols BEFORE the generic Noto Sans so rare symbols don't tofu
+        { match: /NotoSansSymbols2/i,                   name: 'Noto Sans Symbols2' },
+        { match: /NotoSansSymbols/i,                    name: 'Noto Sans Symbols' },
+        { match: /NotoSansMath/i,                       name: 'Noto Sans Math' },
+        { match: /NotoMusic/i,                          name: 'Noto Music' },
+        // Generic Noto Sans / Serif last in the Noto block
+        { match: /NotoSans(?!CJK)/i,                   name: 'Noto Sans' },
+        { match: /NotoSerif(?!CJK)/i,                  name: 'Noto Serif' },
+        // Windows system fonts (local dev only)
+        { match: /seguisym/i,                           name: 'Segoe UI Symbol' },
+        { match: /seguiemj/i,                           name: 'Segoe UI Emoji' },
+        { match: /arial/i,                              name: 'Arial' },
+    ];
+
+    // ── Weight detector from filename ────────────────────────────────────────
+    function guessWeight(filename) {
+        if (/Black/i.test(filename))      return 900;
+        if (/ExtraBold|Extra-Bold/i.test(filename)) return 800;
+        if (/Bold/i.test(filename))       return 700;
+        if (/SemiBold|Semi-Bold/i.test(filename)) return 600;
+        if (/Medium/i.test(filename))     return 500;
+        if (/Light/i.test(filename))      return 300;
+        if (/Thin/i.test(filename))       return 100;
+        return 400; // Regular / default
+    }
+
+    // ── Style detector from filename ─────────────────────────────────────────
+    function guessStyle(filename) {
+        return /Italic/i.test(filename) ? 'italic' : 'normal';
+    }
+
+    // ── Derive a clean family name from filename ──────────────────────────────
+    function deriveName(filename) {
+        for (const rule of NAME_MAP) {
+            if (rule.match.test(filename)) return rule.name;
         }
+        // Fallback: strip weight/style suffixes and use the stem
+        return path.basename(filename, path.extname(filename))
+            .replace(/[-_](Regular|Bold|Italic|Light|Medium|Thin|Black|SemiBold|ExtraBold)/gi, '')
+            .trim() || 'Unknown';
+    }
+
+    // ── Track already-loaded paths to avoid duplicates ───────────────────────
+    const loaded = new Set();
+
+    for (const dir of scanDirs) {
+        if (!fs.existsSync(dir)) continue;
+
+        let files;
+        try {
+            files = fs.readdirSync(dir);
+        } catch {
+            continue;
+        }
+
+        for (const file of files) {
+            // Only load TrueType and OpenType font files
+            if (!/\.(ttf|otf)$/i.test(file)) continue;
+
+            const fullPath = path.join(dir, file);
+            if (loaded.has(fullPath)) continue;
+            loaded.add(fullPath);
+
+            let data;
+            try {
+                data = fs.readFileSync(fullPath);
+            } catch (e) {
+                console.warn(`⚠️  Could not read font file: ${fullPath}`, e.message);
+                continue;
+            }
+
+            const name   = deriveName(file);
+            const weight = guessWeight(file);
+            const style  = guessStyle(file);
+
+            families.push({ name, data, weight, style });
+
+            // Also register with node-canvas so renderChunkImg benefits too
+            try { registerFont(fullPath, { family: name }); } catch {}
+
+            console.log(`✅ Font loaded: [${name}] w${weight} ${style} ← ${file}`);
+        }
+    }
+
+    // ── Sort order for Satori's fallback pipeline ────────────────────────────
+    // Satori tries fonts in array order and uses the first one that has the
+    // requested glyph.  We want:
+    //   1. Noto Sans (Latin/Greek/Cyrillic base)  ← already first because
+    //      NotoSans files appear before CJK in scanDirs
+    //   2. Script-specific faces
+    //   3. Symbol faces
+    //   4. CJK (large, slow to search – put later)
+    //   5. Color Emoji last (Satori can't render CBDT/CBLC colour tables,
+    //      but having it present doesn't hurt)
+    const PRIORITY = [
+        'Noto Sans', 'Noto Serif',
+        'Noto Sans Arabic', 'Noto Sans Devanagari', 'Noto Sans Thai',
+        'Noto Sans Hebrew', 'Noto Sans Bengali', 'Noto Sans Tamil',
+        'Noto Sans Telugu', 'Noto Sans Kannada', 'Noto Sans Malayalam',
+        'Noto Sans Georgian', 'Noto Sans Armenian', 'Noto Sans Ethiopic',
+        'Noto Sans Khmer', 'Noto Sans Myanmar', 'Noto Sans Mongolian',
+        'Noto Sans Sinhala', 'Noto Sans Lao', 'Noto Serif Tibetan',
+        'Noto Sans Duployan', 'Noto Sans Balinese', 'Noto Sans Javanese',
+        'Noto Sans Sundanese', 'Noto Traditional Nushu', 'Noto Sans SignWriting',
+        'Noto Sans Symbols', 'Noto Sans Symbols2', 'Noto Sans Math', 'Noto Music',
+        'Noto Sans CJK',
+        'Noto Color Emoji',
+        'Segoe UI Symbol', 'Segoe UI Emoji', 'Arial',
+    ];
+
+    families.sort((a, b) => {
+        const ai = PRIORITY.indexOf(a.name);
+        const bi = PRIORITY.indexOf(b.name);
+        // Unknown names go to the end
+        const an = ai === -1 ? 9999 : ai;
+        const bn = bi === -1 ? 9999 : bi;
+        return an - bn;
     });
+
+    console.log(`\nℹ️  Total fonts loaded into pipeline: ${families.length}`);
+    if (families.length === 0) {
+        console.warn('⚠️  WARNING: No fonts loaded! All text will render as tofu.');
+    }
+
     return families;
 }
+
+
+
+
+
+
+
 const fonts = loadFonts();
 console.log(`ℹ️ Total fonts loaded: ${fonts.length}`);
 
