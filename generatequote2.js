@@ -24,7 +24,7 @@ console.log(`📡 Telegram API root : ${TG_API_ROOT}`);
 console.log(`📁 Telegram file root: ${TG_FILE_ROOT}`);
 if (HF_TOKEN) console.log(`🤗 HF token detected — will inject auth on .hf.space requests`);
 
-// Helper: build axios options with conditional HF auth
+// Helper: build axios options with conditional HF auth header
 function buildTgRequestOptions(url, extra = {}) {
     const options = { timeout: 8000, ...extra };
     options.headers = { ...(options.headers || {}) };
@@ -36,7 +36,7 @@ function buildTgRequestOptions(url, extra = {}) {
 }
 
 // =============================================================================
-// FONT INVENTORY (informational — Chromium loads them via fontconfig anyway)
+// FONT INVENTORY (informational — Chromium loads all via fontconfig)
 // =============================================================================
 ;(function inventoryFonts() {
     const SCAN_DIRS = [
@@ -97,7 +97,7 @@ async function getBrowser() {
     try {
         console.log('🌐 Launching Chromium browser...');
         sharedBrowser = await puppeteer.launch({
-            headless: 'new', // ← fixes the deprecation warning
+            headless: 'new',
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
             args: [
                 '--no-sandbox', '--disable-setuid-sandbox',
@@ -134,7 +134,7 @@ async function acquirePage() {
     if (PAGE_POOL.length > 0) {
         const page = PAGE_POOL.pop();
         try { await page.evaluate(() => true); return page; }
-        catch { /* dead page, fall through */ }
+        catch { /* dead page */ }
     }
     const browser = await getBrowser();
     const page    = await browser.newPage();
@@ -145,8 +145,7 @@ async function acquirePage() {
         if (
             url.startsWith('data:') ||
             url.includes('cdn.jsdelivr.net') ||
-            url.includes('twemoji.maxcdn.com') ||
-            url.includes('googleapis.com/emoji')
+            url.includes('twemoji.maxcdn.com')
         ) {
             req.continue();
         } else if (url.startsWith('http')) {
@@ -167,45 +166,33 @@ function releasePage(page) {
 
 // =============================================================================
 // FONT STACK FOR CSS
-// Chromium uses fontconfig + freetype which has access to EVERY installed font
-// (including .ttc collections). The font stack below tells Chromium the priority.
 // =============================================================================
 const FONT_STACK_ARRAY = [
-    // Base Latin
     'Noto Sans', 'DejaVu Sans', 'Liberation Sans', 'FreeSans',
-    // Symbol fonts (catches fancy text characters like 𝗛 𝛬)
     'Noto Sans Math', 'Noto Sans Symbols2', 'Noto Sans Symbols',
     'Symbola', 'Noto Music',
-    // CJK
     'Noto Sans CJK', 'Noto Sans CJK SC', 'Noto Sans CJK JP',
     'Noto Sans CJK KR', 'WenQuanYi Micro Hei',
-    // Arabic
     'Noto Sans Arabic', 'Amiri', 'Scheherazade',
-    // Indic
     'Noto Sans Devanagari', 'Noto Sans Bengali', 'Noto Sans Tamil',
     'Noto Sans Telugu', 'Noto Sans Kannada', 'Noto Sans Malayalam',
     'Noto Sans Gujarati', 'Noto Sans Gurmukhi', 'Noto Sans Oriya',
     'Noto Sans Sinhala',
-    // SE Asian
     'Noto Sans Thai', 'Noto Sans Lao', 'Noto Sans Khmer', 'Noto Sans Myanmar',
-    // Others
     'Noto Sans Hebrew', 'Noto Sans Syriac', 'Noto Sans Thaana',
     'Noto Sans Georgian', 'Noto Sans Armenian', 'Noto Sans Ethiopic',
     'Noto Sans Mongolian', 'Noto Serif Tibetan',
     'Noto Sans Cherokee', 'Noto Sans Canadian Aboriginal',
     'Noto Sans Tifinagh', 'Noto Sans Vai', 'Noto Sans NKo',
     'Noto Sans Adlam', 'Noto Sans Bamum',
-    // Historic
     'Noto Sans Runic', 'Noto Sans Ogham', 'Noto Sans Gothic',
     'Noto Sans Old Italic', 'Noto Sans Old Persian',
     'Noto Sans Old Turkic', 'Noto Sans Phoenician',
     'Noto Sans Ugaritic', 'Noto Sans Cuneiform',
     'Noto Sans Egyptian Hieroglyphs', 'Noto Sans Linear A',
     'Noto Sans Linear B', 'Noto Sans Glagolitic',
-    // Rare
     'Noto Sans Duployan', 'Noto Sans SignWriting',
     'Noto Sans Deseret', 'Noto Sans Shavian', 'Noto Sans Osmanya',
-    // Last resort guarantees no tofu
     'Unifont Upper', 'Unifont',
     'sans-serif'
 ];
@@ -234,9 +221,68 @@ function escapeHtml(t) {
 }
 
 // =============================================================================
-// EMOJI UTILITIES — multi-CDN fallback chain
+// EMOJI UTILITIES — multi-provider CDN with automatic fallback chain
 // =============================================================================
 const IS_EMOJI = /(\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\p{Emoji_Modifier_Base})/u;
+
+// Emoji provider URL builders — each returns a list of candidate URLs
+const EMOJI_PROVIDERS = {
+    apple: (cps) => {
+        const variants = buildCodepointVariants(cps);
+        return variants.map(cp =>
+            `https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/${cp}.png`
+        );
+    },
+    google: (cps) => {
+        const variants = buildCodepointVariants(cps);
+        return variants.map(cp =>
+            `https://cdn.jsdelivr.net/npm/emoji-datasource-google/img/google/64/${cp}.png`
+        );
+    },
+    twitter: (cps) => {
+        const variants = buildCodepointVariants(cps);
+        return variants.map(cp =>
+            `https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/${cp}.png`
+        );
+    },
+    facebook: (cps) => {
+        const variants = buildCodepointVariants(cps);
+        return variants.map(cp =>
+            `https://cdn.jsdelivr.net/npm/emoji-datasource-facebook/img/facebook/64/${cp}.png`
+        );
+    },
+    microsoft: (cps) => {
+        const variants = buildCodepointVariants(cps);
+        return variants.map(cp =>
+            `https://cdn.jsdelivr.net/npm/emoji-datasource-microsoft/img/microsoft/64/${cp}.png`
+        );
+    },
+    samsung: (cps) => {
+        const variants = buildCodepointVariants(cps);
+        return variants.map(cp =>
+            `https://cdn.jsdelivr.net/npm/emoji-datasource-samsung/img/samsung/64/${cp}.png`
+        );
+    },
+    whatsapp: (cps) => {
+        const variants = buildCodepointVariants(cps);
+        return variants.map(cp =>
+            `https://cdn.jsdelivr.net/npm/emoji-datasource-whatsapp/img/whatsapp/64/${cp}.png`
+        );
+    },
+    openmoji: (cps) => {
+        const variants = buildCodepointVariants(cps);
+        // OpenMoji uses UPPERCASE codepoints
+        return variants.map(cp =>
+            `https://cdn.jsdelivr.net/npm/openmoji@latest/color/72x72/${cp.toUpperCase()}.png`
+        );
+    },
+    emojione: (cps) => {
+        const variants = buildCodepointVariants(cps);
+        return variants.map(cp =>
+            `https://cdn.jsdelivr.net/npm/emoji-datasource-joypixels/img/joypixels/64/${cp}.png`
+        );
+    },
+};
 
 function emojiToCodepoints(emoji) {
     const r = []; let c = 0, p = 0;
@@ -251,35 +297,43 @@ function emojiToCodepoints(emoji) {
     return r;
 }
 
-function buildEmojiUrls(emoji) {
-    const cps = emojiToCodepoints(emoji);
+function buildCodepointVariants(cps) {
     const joined      = cps.join('-');
     const noFe0f      = cps.filter(c => c !== 'fe0f').join('-');
     const noZwjFe0f   = joined.includes('200d') ? joined : noFe0f;
     const baseOnly    = cps[0];
     const noFe0fNoVar = cps.filter(c => c !== 'fe0f' && c !== '200d').join('-');
 
-    const variants = [...new Set([
+    return [...new Set([
         noZwjFe0f, joined, noFe0f, noFe0fNoVar, baseOnly,
     ])].filter(Boolean);
+}
 
+// Build URL list for selected provider, then add cross-provider fallbacks
+function buildEmojiUrls(emoji, provider = 'apple') {
+    const cps = emojiToCodepoints(emoji);
+    if (cps.length === 0) return [];
+
+    const primaryProvider = EMOJI_PROVIDERS[provider] ? provider : 'apple';
     const urls = [];
-    // Apple emoji set
-    for (const cp of variants) {
-        urls.push(`https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/${cp}.png`);
+
+    // 1. User's chosen provider first
+    urls.push(...EMOJI_PROVIDERS[primaryProvider](cps));
+
+    // 2. Cross-provider fallback chain
+    const fallbackOrder = ['apple', 'google', 'twitter', 'facebook'];
+    for (const fp of fallbackOrder) {
+        if (fp === primaryProvider) continue;
+        urls.push(...EMOJI_PROVIDERS[fp](cps));
     }
-    // Twemoji fallback
-    for (const cp of variants) {
-        urls.push(`https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/${cp}.png`);
-    }
+
     return urls;
 }
 
-function emojiImgTag(emoji, cssClass = 'emoji') {
-    const urls = buildEmojiUrls(emoji);
+function emojiImgTag(emoji, cssClass = 'emoji', provider = 'apple') {
+    const urls = buildEmojiUrls(emoji, provider);
     if (urls.length === 0) return escapeHtml(emoji);
 
-    // Chained onerror — browser falls back through all URLs automatically
     let onerror = `this.style.display='none';this.onerror=null;`;
     for (let i = urls.length - 1; i >= 1; i--) {
         onerror = `this.onerror=function(){${onerror}};this.src='${urls[i]}';`;
@@ -327,13 +381,13 @@ async function getPremiumEmojiB64(id) {
 // =============================================================================
 // NAME RENDERING (pure HTML — Puppeteer handles all Unicode natively)
 // =============================================================================
-function nameToHtml(text) {
+function nameToHtml(text, provider = 'apple') {
     if (!text) return '';
     const seg = new Intl.Segmenter();
     let out = '';
     for (const { segment: c } of seg.segment(text)) {
         if (IS_EMOJI.test(c))
-            out += emojiImgTag(c, 'emoji');
+            out += emojiImgTag(c, 'emoji', provider);
         else
             out += escapeHtml(c);
     }
@@ -343,7 +397,7 @@ function nameToHtml(text) {
 // =============================================================================
 // MESSAGE HTML BUILDER
 // =============================================================================
-async function msgToHtml(text, entities = []) {
+async function msgToHtml(text, entities = [], provider = 'apple') {
     if (!text) return '';
     text = text.replace(/ (https?:\/\/|t\.me\/|Telegram\.me\/|@\w+)/gi, '\n$1');
 
@@ -363,7 +417,7 @@ async function msgToHtml(text, entities = []) {
         let out = '';
         for (const { segment: c } of seg.segment(str)) {
             if (IS_EMOJI.test(c))
-                out += emojiImgTag(c, 'emoji');
+                out += emojiImgTag(c, 'emoji', provider);
             else
                 out += escapeHtml(c);
         }
@@ -450,9 +504,12 @@ async function createImage(
     const MSG_FS  = 16 * SCALE;
 
     const rows = await Promise.all(msgList.map(async (d) => {
+        // Per-message emoji provider — default to 'apple' if not set
+        const provider = d.emojiProvider || 'apple';
+
         const name     = `${d.firstName || ''} ${d.lastName || ''}`.trim() || 'User';
         const color    = getTelegramColor(d.nameColorId);
-        const nameHtml = nameToHtml(name);
+        const nameHtml = nameToHtml(name, provider);
 
         const avatarB64 = d.inputImageBuffer
             ? `data:image/png;base64,${(await sharp(d.inputImageBuffer).png().toBuffer()).toString('base64')}`
@@ -470,10 +527,10 @@ async function createImage(
 
         const isSticker = !!d.mediaBuffer && (!d.message || !d.message.trim());
         const rColor    = getTelegramColor(d.replysendercolor || 0);
-        const rName     = d.replySender ? nameToHtml(d.replySender) : '';
-        const fName     = d.forwardName ? nameToHtml(d.forwardName) : '';
+        const rName     = d.replySender ? nameToHtml(d.replySender, provider) : '';
+        const fName     = d.forwardName ? nameToHtml(d.forwardName, provider) : '';
         const statusB64 = d.customemojiid ? await getPremiumEmojiB64(d.customemojiid) : null;
-        const msgHtml   = await msgToHtml(d.message || '', d.entities || []);
+        const msgHtml   = await msgToHtml(d.message || '', d.entities || [], provider);
 
         return {
             name, color, nameHtml, avatarB64, mediaB64, isSticker,
@@ -570,14 +627,13 @@ pre { font-family: 'JetBrains Mono','Fira Code','Consolas','Courier New',monospa
     try {
         await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 15000 });
 
-        // Wait for emoji images with multi-CDN fallback chain
         await page.evaluate(() => {
             return new Promise(resolve => {
                 const imgs = [...document.querySelectorAll('img')];
                 if (imgs.length === 0) return resolve();
                 let settled = 0;
                 const done = () => { if (++settled >= imgs.length) resolve(); };
-                setTimeout(resolve, 5000); // hard cap
+                setTimeout(resolve, 5000);
                 imgs.forEach(img => {
                     if (img.complete && img.naturalWidth > 0) done();
                     else if (img.complete) done();
