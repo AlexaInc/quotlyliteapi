@@ -348,30 +348,49 @@ const ECACHE = new Map();
 
 async function getPremiumEmojiB64(id) {
     if (ECACHE.has(id)) return ECACHE.get(id);
+    
     try {
+        // Base headers configuration used across requests
+        const headers = {};
+        if (HF_TOKEN) {
+            headers['Authorization'] = `Bearer ${HF_TOKEN}`;
+            headers['Referer'] = 'https://huggingface.co';
+        }
+
+        // 1. Fetch Custom Emoji Stickers Info
         const stickersUrl = `${TG_API_ROOT}/bot${BOT_TOKEN}/getCustomEmojiStickers`;
         const { data: d1 } = await axios.post(
-            stickersUrl, { custom_emoji_ids: [id] },
-            buildTgRequestOptions(stickersUrl)
+            stickersUrl, 
+            { custom_emoji_ids: [id] }, 
+            { headers }
         );
+        
         const st = d1.result?.[0];
         if (!st) return null;
 
+        // 2. Get File Path
         const getFileUrl = `${TG_API_ROOT}/bot${BOT_TOKEN}/getFile`;
         const { data: d2 } = await axios.post(
-            getFileUrl, { file_id: st.thumbnail?.file_id || st.file_id },
-            buildTgRequestOptions(getFileUrl)
+            getFileUrl, 
+            { file_id: st.thumbnail?.file_id || st.file_id }, 
+            { headers }
         );
 
+        // 3. Download the Actual File
         const fileUrl = `${TG_FILE_ROOT}/bot${BOT_TOKEN}/${d2.result.file_path}`;
         const { data: raw } = await axios.get(
-            fileUrl,
-            buildTgRequestOptions(fileUrl, { responseType: 'arraybuffer' })
+            fileUrl, 
+            { 
+                headers,
+                responseType: 'arraybuffer' 
+            }
         );
 
+        // 4. Process Image with Sharp
         const b64 = `data:image/png;base64,${(await sharp(raw).resize(128, 128).png().toBuffer()).toString('base64')}`;
         ECACHE.set(id, b64);
         return b64;
+
     } catch (e) {
         console.error(`❌ Premium emoji fetch failed: ${id} — ${e.message}`);
         return null;
