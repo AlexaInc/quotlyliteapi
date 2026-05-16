@@ -1,386 +1,293 @@
 require('dotenv').config();
 
-const fs = require('fs');
-const path = require('path');
-const satori = require('satori').default;
-const parse = require('html-react-parser').default;
+const puppeteer  = require('puppeteer');
 const { createCanvas, registerFont } = require('canvas');
-const sharp = require('sharp');
-const axios = require('axios');
+const fs         = require('fs');
+const path       = require('path');
+const sharp      = require('sharp');
+const axios      = require('axios');
 
 // =============================================================================
-// FONT LOADER - Universal Unicode Coverage
-// Validates every font before giving it to Satori.
-// Bitmap fonts (NotoColorEmoji, some CJK) crash Satori — we skip them.
-// Fonts are loaded ONCE at startup and reused for every request.
+// FONT SETUP — scan system fonts for canvas rendering
 // =============================================================================
+const SCAN_DIRS = [
+    '/usr/share/fonts/truetype/noto-manual',
+    '/usr/share/fonts/truetype/noto',
+    '/usr/share/fonts/truetype/noto-extra',
+    '/usr/share/fonts/opentype/noto',
+    '/usr/share/fonts/truetype/noto-cjk',
+    '/usr/share/fonts/opentype/noto-cjk',
+    '/usr/share/fonts/noto',
+    '/usr/share/fonts/noto-cjk',
+    '/usr/local/share/fonts',
+    'C:\\Windows\\Fonts',
+];
 
-// Satori uses opentype.js internally. We use the same parser to pre-validate
-// every font file so we never pass an incompatible font to Satori.
-const opentype = require('@shuding/opentype.js');
+// Font family name mapping for registerFont
+const CANVAS_NAME_MAP = [
+    { r: /NotoSansSymbols2/i,             n: 'Noto Sans Symbols2' },
+    { r: /NotoSansSymbols/i,              n: 'Noto Sans Symbols' },
+    { r: /NotoSansMath/i,                 n: 'Noto Sans Math' },
+    { r: /NotoMusic/i,                    n: 'Noto Music' },
+    { r: /NotoSansCJK/i,                  n: 'Noto Sans CJK' },
+    { r: /NotoSerifCJK/i,                 n: 'Noto Serif CJK' },
+    { r: /NotoColorEmoji/i,               n: 'Noto Color Emoji' },
+    { r: /NotoSansArabic/i,               n: 'Noto Sans Arabic' },
+    { r: /NotoSansDevanagari/i,           n: 'Noto Sans Devanagari' },
+    { r: /NotoSansBengali/i,              n: 'Noto Sans Bengali' },
+    { r: /NotoSansTamil/i,                n: 'Noto Sans Tamil' },
+    { r: /NotoSansTelugu/i,               n: 'Noto Sans Telugu' },
+    { r: /NotoSansKannada/i,              n: 'Noto Sans Kannada' },
+    { r: /NotoSansMalayalam/i,            n: 'Noto Sans Malayalam' },
+    { r: /NotoSansGujarati/i,             n: 'Noto Sans Gujarati' },
+    { r: /NotoSansGurmukhi/i,             n: 'Noto Sans Gurmukhi' },
+    { r: /NotoSansOriya/i,                n: 'Noto Sans Oriya' },
+    { r: /NotoSansSinhala/i,              n: 'Noto Sans Sinhala' },
+    { r: /NotoSansThai/i,                 n: 'Noto Sans Thai' },
+    { r: /NotoSansLao/i,                  n: 'Noto Sans Lao' },
+    { r: /NotoSansKhmer/i,                n: 'Noto Sans Khmer' },
+    { r: /NotoSansMyanmar/i,              n: 'Noto Sans Myanmar' },
+    { r: /NotoSansHebrew/i,               n: 'Noto Sans Hebrew' },
+    { r: /NotoSansSyriac/i,               n: 'Noto Sans Syriac' },
+    { r: /NotoSansThaana/i,               n: 'Noto Sans Thaana' },
+    { r: /NotoSansGeorgian/i,             n: 'Noto Sans Georgian' },
+    { r: /NotoSansArmenian/i,             n: 'Noto Sans Armenian' },
+    { r: /NotoSansEthiopic/i,             n: 'Noto Sans Ethiopic' },
+    { r: /NotoSansMongolian/i,            n: 'Noto Sans Mongolian' },
+    { r: /NotoSansRunic/i,                n: 'Noto Sans Runic' },
+    { r: /NotoSansOgham/i,                n: 'Noto Sans Ogham' },
+    { r: /NotoSansGothic/i,               n: 'Noto Sans Gothic' },
+    { r: /NotoSansOldItalic/i,            n: 'Noto Sans Old Italic' },
+    { r: /NotoSansCuneiform/i,            n: 'Noto Sans Cuneiform' },
+    { r: /NotoSansEgyptianHieroglyphs/i,  n: 'Noto Sans Egyptian Hieroglyphs' },
+    { r: /NotoSansDuployan/i,             n: 'Noto Sans Duployan' },
+    { r: /NotoSansLinearB/i,              n: 'Noto Sans Linear B' },
+    { r: /NotoSansLinearA/i,              n: 'Noto Sans Linear A' },
+    { r: /NotoSansPhoenician/i,           n: 'Noto Sans Phoenician' },
+    { r: /NotoSansOldPersian/i,           n: 'Noto Sans Old Persian' },
+    { r: /NotoSansOldTurkic/i,            n: 'Noto Sans Old Turkic' },
+    { r: /NotoSansAdlam/i,                n: 'Noto Sans Adlam' },
+    { r: /NotoSansBalinese/i,             n: 'Noto Sans Balinese' },
+    { r: /NotoSansBamum/i,                n: 'Noto Sans Bamum' },
+    { r: /NotoSansBatak/i,                n: 'Noto Sans Batak' },
+    { r: /NotoSansBuginese/i,             n: 'Noto Sans Buginese' },
+    { r: /NotoSansChakma/i,               n: 'Noto Sans Chakma' },
+    { r: /NotoSansCham/i,                 n: 'Noto Sans Cham' },
+    { r: /NotoSansCoptic/i,               n: 'Noto Sans Coptic' },
+    { r: /NotoSansDeseret/i,              n: 'Noto Sans Deseret' },
+    { r: /NotoSansDuployan/i,             n: 'Noto Sans Duployan' },
+    { r: /NotoSansElbasan/i,              n: 'Noto Sans Elbasan' },
+    { r: /NotoSansGlagolitic/i,           n: 'Noto Sans Glagolitic' },
+    { r: /NotoSansHanifiRohingya/i,       n: 'Noto Sans Hanifi Rohingya' },
+    { r: /NotoSansHanunoo/i,              n: 'Noto Sans Hanunoo' },
+    { r: /NotoSansJavanese/i,             n: 'Noto Sans Javanese' },
+    { r: /NotoSansKannada/i,              n: 'Noto Sans Kannada' },
+    { r: /NotoSansKayahLi/i,              n: 'Noto Sans Kayah Li' },
+    { r: /NotoSansLepcha/i,               n: 'Noto Sans Lepcha' },
+    { r: /NotoSansLimbu/i,                n: 'Noto Sans Limbu' },
+    { r: /NotoSansLisu/i,                 n: 'Noto Sans Lisu' },
+    { r: /NotoSansMandaic/i,              n: 'Noto Sans Mandaic' },
+    { r: /NotoSansMarchen/i,              n: 'Noto Sans Marchen' },
+    { r: /NotoSansMasaramGondi/i,         n: 'Noto Sans Masaram Gondi' },
+    { r: /NotoSansMeeteiMayek/i,          n: 'Noto Sans Meetei Mayek' },
+    { r: /NotoSansMiao/i,                 n: 'Noto Sans Miao' },
+    { r: /NotoSansNewa/i,                 n: 'Noto Sans Newa' },
+    { r: /NotoSansNKo/i,                  n: 'Noto Sans NKo' },
+    { r: /NotoSansOlChiki/i,              n: 'Noto Sans Ol Chiki' },
+    { r: /NotoSansOsage/i,                n: 'Noto Sans Osage' },
+    { r: /NotoSansOsmanya/i,              n: 'Noto Sans Osmanya' },
+    { r: /NotoSansPahawhHmong/i,          n: 'Noto Sans Pahawh Hmong' },
+    { r: /NotoSansRejang/i,               n: 'Noto Sans Rejang' },
+    { r: /NotoSansSamaritan/i,            n: 'Noto Sans Samaritan' },
+    { r: /NotoSansSaurashtra/i,           n: 'Noto Sans Saurashtra' },
+    { r: /NotoSansShavian/i,              n: 'Noto Sans Shavian' },
+    { r: /NotoSansSignWriting/i,          n: 'Noto Sans SignWriting' },
+    { r: /NotoSansSoyombo/i,              n: 'Noto Sans Soyombo' },
+    { r: /NotoSansSundanese/i,            n: 'Noto Sans Sundanese' },
+    { r: /NotoSansSylotiNagri/i,          n: 'Noto Sans Syloti Nagri' },
+    { r: /NotoSansTagalog/i,              n: 'Noto Sans Tagalog' },
+    { r: /NotoSansTagbanwa/i,             n: 'Noto Sans Tagbanwa' },
+    { r: /NotoSansTaiLe/i,                n: 'Noto Sans Tai Le' },
+    { r: /NotoSansTaiTham/i,              n: 'Noto Sans Tai Tham' },
+    { r: /NotoSansTaiViet/i,              n: 'Noto Sans Tai Viet' },
+    { r: /NotoSansTifinagh/i,             n: 'Noto Sans Tifinagh' },
+    { r: /NotoSansUgaritic/i,             n: 'Noto Sans Ugaritic' },
+    { r: /NotoSansVai/i,                  n: 'Noto Sans Vai' },
+    { r: /NotoSansWancho/i,               n: 'Noto Sans Wancho' },
+    { r: /NotoSansYi/i,                   n: 'Noto Sans Yi' },
+    { r: /NotoSansZanabazarSquare/i,      n: 'Noto Sans Zanabazar Square' },
+    { r: /NotoSerifTangut/i,              n: 'Noto Serif Tangut' },
+    { r: /NotoSerifTibetan/i,             n: 'Noto Serif Tibetan' },
+    { r: /NotoTraditionalNushu/i,         n: 'Noto Traditional Nushu' },
+    // Generic must be last
+    { r: /NotoSans/i,                     n: 'Noto Sans' },
+    { r: /NotoSerif/i,                    n: 'Noto Serif' },
+    { r: /NotoMono/i,                     n: 'Noto Mono' },
+    { r: /seguisym/i,                     n: 'Segoe UI Symbol' },
+    { r: /seguiemj/i,                     n: 'Segoe UI Emoji' },
+    { r: /arial/i,                        n: 'Arial' },
+];
 
-// =============================================================================
-// FONT VALIDATOR
-// We cannot use @shuding/opentype.js directly — it's a private internal build.
-// Instead we check the raw binary bytes for TTF/OTF magic numbers.
-// This is the same check browsers do before parsing a font file.
-// =============================================================================
-
-function isSatoriCompatible(buffer, filename) {
-    try {
-        if (!buffer || buffer.length < 16) return false;
-
-        // Read the first 4 bytes — this is the "sfVersion" / magic number
-        const tag =
-            (buffer[0] << 24 | buffer[1] << 16 | buffer[2] << 8 | buffer[3]) >>> 0;
-
-        // ── REJECT these formats — Satori/opentype.js cannot handle them ──────
-
-        // TTC (TrueType Collection) — multi-face container
-        // Magic: 0x74746366 = "ttcf"
-        if (tag === 0x74746366) {
-            console.log(`⏭️  Skip (TTC collection): ${filename}`);
-            return false;
-        }
-
-        // WOFF — web font wrapper (not raw sfnt)
-        // Magic: 0x774F4646 = "wOFF"
-        if (tag === 0x774F4646) {
-            console.log(`⏭️  Skip (WOFF): ${filename}`);
-            return false;
-        }
-
-        // WOFF2 — web font wrapper v2
-        // Magic: 0x774F4632 = "wOF2"
-        if (tag === 0x774F4632) {
-            console.log(`⏭️  Skip (WOFF2): ${filename}`);
-            return false;
-        }
-
-        // ── ACCEPT these formats — all are valid sfnt-based fonts ─────────────
-
-        // TrueType: version 0x00010000 (most .ttf files)
-        if (tag === 0x00010000) return true;
-
-        // CFF OpenType: version "OTTO" = 0x4F54544F
-        if (tag === 0x4F54544F) return true;
-
-        // TrueType with "true" tag (some Apple fonts)
-        // Magic: 0x74727565 = "true"
-        if (tag === 0x74727565) return true;
-
-        // TrueType with "typ1" tag (very old PostScript fonts)
-        // Magic: 0x74797031 = "typ1"
-        if (tag === 0x74797031) return true;
-
-        // Unknown format — skip it to be safe
-        const hex = '0x' + tag.toString(16).toUpperCase().padStart(8, '0');
-        console.log(`⏭️  Skip (unknown magic ${hex}): ${filename}`);
-        return false;
-
-    } catch (e) {
-        console.log(`⏭️  Skip (read error): ${filename} — ${e.message}`);
-        return false;
+function deriveCanvasName(filename) {
+    for (const rule of CANVAS_NAME_MAP) {
+        if (rule.r.test(filename)) return rule.n;
     }
+    return 'Noto Sans';
 }
 
-function loadFonts() {
-    const families  = [];
-    const loaded    = new Set();
-    let   skipped   = 0;
-    let   validated = 0;
-
-    // ── Scan directories in priority order ────────────────────────────────────
-    const SCAN_DIRS = [
-        '/usr/share/fonts/truetype/noto-manual',  // our wget'd specific fonts
-        '/usr/share/fonts/truetype/noto',          // apt: fonts-noto base
-        '/usr/share/fonts/truetype/noto-extra',
-        '/usr/share/fonts/opentype/noto',          // apt: CJK opentype
-        '/usr/share/fonts/truetype/noto-cjk',
-        '/usr/share/fonts/opentype/noto-cjk',
-        '/usr/share/fonts/noto',
-        '/usr/share/fonts/noto-cjk',
-        '/usr/local/share/fonts',
-        'C:\\Windows\\Fonts',                      // local dev
-    ];
-
-    // ── Files to ALWAYS skip (bitmap / color fonts that crash Satori) ─────────
-    const SKIP_PATTERNS = [
-        /NotoColorEmoji/i,       // CBDT/CBLC bitmap — no outlines
-        /NotoEmoji(?!.*Mono)/i,  // older bitmap emoji font
-        /LastResort/i,           // Apple last-resort font
-        /\.ttc$/i,               // TTC collections — Satori can't handle them
-    ];
-
-    // ── Font family name mapping (filename → Satori family name) ─────────────
-    const NAME_MAP = [
-        // Symbols FIRST — highest priority for rare codepoints
-        { r: /NotoSansSymbols2/i,             n: 'Noto Sans Symbols2' },
-        { r: /NotoSansSymbols/i,              n: 'Noto Sans Symbols' },
-        { r: /NotoSansMath/i,                 n: 'Noto Sans Math' },
-        { r: /NotoMusic/i,                    n: 'Noto Music' },
-        // CJK
-        { r: /NotoSansCJKsc/i,               n: 'Noto Sans CJK SC' },
-        { r: /NotoSansCJKtc/i,               n: 'Noto Sans CJK TC' },
-        { r: /NotoSansCJKjp/i,               n: 'Noto Sans CJK JP' },
-        { r: /NotoSansCJKkr/i,               n: 'Noto Sans CJK KR' },
-        { r: /NotoSansCJK/i,                 n: 'Noto Sans CJK' },
-        { r: /NotoSerifCJK/i,                n: 'Noto Serif CJK' },
-        // Script-specific (alphabetical)
-        { r: /NotoSansAdlam/i,               n: 'Noto Sans Adlam' },
-        { r: /NotoSansAhom/i,                n: 'Noto Sans Ahom' },
-        { r: /NotoSansArabic/i,              n: 'Noto Sans Arabic' },
-        { r: /NotoSansArmenian/i,            n: 'Noto Sans Armenian' },
-        { r: /NotoSansAvestan/i,             n: 'Noto Sans Avestan' },
-        { r: /NotoSansBalinese/i,            n: 'Noto Sans Balinese' },
-        { r: /NotoSansBamum/i,               n: 'Noto Sans Bamum' },
-        { r: /NotoSansBatak/i,               n: 'Noto Sans Batak' },
-        { r: /NotoSansBengali/i,             n: 'Noto Sans Bengali' },
-        { r: /NotoSansBrahmi/i,              n: 'Noto Sans Brahmi' },
-        { r: /NotoSansBuginese/i,            n: 'Noto Sans Buginese' },
-        { r: /NotoSansBuhid/i,               n: 'Noto Sans Buhid' },
-        { r: /NotoSansCanadianAboriginal/i,  n: 'Noto Sans Canadian Aboriginal' },
-        { r: /NotoSansCarian/i,              n: 'Noto Sans Carian' },
-        { r: /NotoSansChakma/i,              n: 'Noto Sans Chakma' },
-        { r: /NotoSansCham/i,                n: 'Noto Sans Cham' },
-        { r: /NotoSansCoptic/i,              n: 'Noto Sans Coptic' },
-        { r: /NotoSansCuneiform/i,           n: 'Noto Sans Cuneiform' },
-        { r: /NotoSansCypriot/i,             n: 'Noto Sans Cypriot' },
-        { r: /NotoSansDeseret/i,             n: 'Noto Sans Deseret' },
-        { r: /NotoSansDevanagari/i,          n: 'Noto Sans Devanagari' },
-        { r: /NotoSansDuployan/i,            n: 'Noto Sans Duployan' },
-        { r: /NotoSansEgyptianHieroglyphs/i, n: 'Noto Sans Egyptian Hieroglyphs' },
-        { r: /NotoSansElbasan/i,             n: 'Noto Sans Elbasan' },
-        { r: /NotoSansEthiopic/i,            n: 'Noto Sans Ethiopic' },
-        { r: /NotoSansGeorgian/i,            n: 'Noto Sans Georgian' },
-        { r: /NotoSansGlagolitic/i,          n: 'Noto Sans Glagolitic' },
-        { r: /NotoSansGothic/i,              n: 'Noto Sans Gothic' },
-        { r: /NotoSansGujarati/i,            n: 'Noto Sans Gujarati' },
-        { r: /NotoSansGurmukhi/i,            n: 'Noto Sans Gurmukhi' },
-        { r: /NotoSansHanifiRohingya/i,      n: 'Noto Sans Hanifi Rohingya' },
-        { r: /NotoSansHanunoo/i,             n: 'Noto Sans Hanunoo' },
-        { r: /NotoSansHebrew/i,              n: 'Noto Sans Hebrew' },
-        { r: /NotoSansImperialAramaic/i,     n: 'Noto Sans Imperial Aramaic' },
-        { r: /NotoSansJavanese/i,            n: 'Noto Sans Javanese' },
-        { r: /NotoSansKannada/i,             n: 'Noto Sans Kannada' },
-        { r: /NotoSansKayahLi/i,             n: 'Noto Sans Kayah Li' },
-        { r: /NotoSansKharoshthi/i,          n: 'Noto Sans Kharoshthi' },
-        { r: /NotoSansKhmer/i,               n: 'Noto Sans Khmer' },
-        { r: /NotoSansLao/i,                 n: 'Noto Sans Lao' },
-        { r: /NotoSansLepcha/i,              n: 'Noto Sans Lepcha' },
-        { r: /NotoSansLimbu/i,               n: 'Noto Sans Limbu' },
-        { r: /NotoSansLinearA/i,             n: 'Noto Sans Linear A' },
-        { r: /NotoSansLinearB/i,             n: 'Noto Sans Linear B' },
-        { r: /NotoSansLisu/i,                n: 'Noto Sans Lisu' },
-        { r: /NotoSansLycian/i,              n: 'Noto Sans Lycian' },
-        { r: /NotoSansLydian/i,              n: 'Noto Sans Lydian' },
-        { r: /NotoSansMalayalam/i,           n: 'Noto Sans Malayalam' },
-        { r: /NotoSansMandaic/i,             n: 'Noto Sans Mandaic' },
-        { r: /NotoSansMarchen/i,             n: 'Noto Sans Marchen' },
-        { r: /NotoSansMasaramGondi/i,        n: 'Noto Sans Masaram Gondi' },
-        { r: /NotoSansMeeteiMayek/i,         n: 'Noto Sans Meetei Mayek' },
-        { r: /NotoSansMiao/i,                n: 'Noto Sans Miao' },
-        { r: /NotoSansMongolian/i,           n: 'Noto Sans Mongolian' },
-        { r: /NotoSansMyanmar/i,             n: 'Noto Sans Myanmar' },
-        { r: /NotoSansNewa/i,                n: 'Noto Sans Newa' },
-        { r: /NotoSansNKo/i,                 n: 'Noto Sans NKo' },
-        { r: /NotoSansOgham/i,               n: 'Noto Sans Ogham' },
-        { r: /NotoSansOlChiki/i,             n: 'Noto Sans Ol Chiki' },
-        { r: /NotoSansOldItalic/i,           n: 'Noto Sans Old Italic' },
-        { r: /NotoSansOldPersian/i,          n: 'Noto Sans Old Persian' },
-        { r: /NotoSansOldSouthArabian/i,     n: 'Noto Sans Old South Arabian' },
-        { r: /NotoSansOldTurkic/i,           n: 'Noto Sans Old Turkic' },
-        { r: /NotoSansOriya/i,               n: 'Noto Sans Oriya' },
-        { r: /NotoSansOsage/i,               n: 'Noto Sans Osage' },
-        { r: /NotoSansOsmanya/i,             n: 'Noto Sans Osmanya' },
-        { r: /NotoSansPahawhHmong/i,         n: 'Noto Sans Pahawh Hmong' },
-        { r: /NotoSansPhoenician/i,          n: 'Noto Sans Phoenician' },
-        { r: /NotoSansRejang/i,              n: 'Noto Sans Rejang' },
-        { r: /NotoSansRunic/i,               n: 'Noto Sans Runic' },
-        { r: /NotoSansSamaritan/i,           n: 'Noto Sans Samaritan' },
-        { r: /NotoSansSaurashtra/i,          n: 'Noto Sans Saurashtra' },
-        { r: /NotoSansShavian/i,             n: 'Noto Sans Shavian' },
-        { r: /NotoSansSignWriting/i,         n: 'Noto Sans SignWriting' },
-        { r: /NotoSansSinhala/i,             n: 'Noto Sans Sinhala' },
-        { r: /NotoSansSoyombo/i,             n: 'Noto Sans Soyombo' },
-        { r: /NotoSansSundanese/i,           n: 'Noto Sans Sundanese' },
-        { r: /NotoSansSylotiNagri/i,         n: 'Noto Sans Syloti Nagri' },
-        { r: /NotoSansSyriac/i,              n: 'Noto Sans Syriac' },
-        { r: /NotoSansTagalog/i,             n: 'Noto Sans Tagalog' },
-        { r: /NotoSansTagbanwa/i,            n: 'Noto Sans Tagbanwa' },
-        { r: /NotoSansTaiLe/i,               n: 'Noto Sans Tai Le' },
-        { r: /NotoSansTaiTham/i,             n: 'Noto Sans Tai Tham' },
-        { r: /NotoSansTaiViet/i,             n: 'Noto Sans Tai Viet' },
-        { r: /NotoSansTamil/i,               n: 'Noto Sans Tamil' },
-        { r: /NotoSansTelugu/i,              n: 'Noto Sans Telugu' },
-        { r: /NotoSansThaana/i,              n: 'Noto Sans Thaana' },
-        { r: /NotoSansThai/i,                n: 'Noto Sans Thai' },
-        { r: /NotoSansTifinagh/i,            n: 'Noto Sans Tifinagh' },
-        { r: /NotoSansUgaritic/i,            n: 'Noto Sans Ugaritic' },
-        { r: /NotoSansVai/i,                 n: 'Noto Sans Vai' },
-        { r: /NotoSansWancho/i,              n: 'Noto Sans Wancho' },
-        { r: /NotoSansYi/i,                  n: 'Noto Sans Yi' },
-        { r: /NotoSansZanabazarSquare/i,     n: 'Noto Sans Zanabazar Square' },
-        { r: /NotoSerifTangut/i,             n: 'Noto Serif Tangut' },
-        { r: /NotoSerifTibetan/i,            n: 'Noto Serif Tibetan' },
-        { r: /NotoTraditionalNushu/i,        n: 'Noto Traditional Nushu' },
-        // Generic Noto Sans/Serif — must be AFTER all specific entries
-        { r: /NotoSans/i,                    n: 'Noto Sans' },
-        { r: /NotoSerif/i,                   n: 'Noto Serif' },
-        { r: /NotoMono/i,                    n: 'Noto Mono' },
-        // Windows
-        { r: /seguisym/i,                    n: 'Segoe UI Symbol' },
-        { r: /seguiemj/i,                    n: 'Segoe UI Emoji' },
-        { r: /arial/i,                       n: 'Arial' },
-    ];
-
-    // Satori fallback order — first match wins per glyph
-    const PRIORITY = [
-        'Noto Sans',
-        'Noto Sans Symbols', 'Noto Sans Symbols2',
-        'Noto Sans Math', 'Noto Music',
-        'Noto Sans Arabic', 'Noto Sans Devanagari', 'Noto Sans Bengali',
-        'Noto Sans Tamil', 'Noto Sans Telugu', 'Noto Sans Kannada',
-        'Noto Sans Malayalam', 'Noto Sans Gujarati', 'Noto Sans Gurmukhi',
-        'Noto Sans Oriya', 'Noto Sans Sinhala',
-        'Noto Sans Thai', 'Noto Sans Lao', 'Noto Sans Khmer',
-        'Noto Sans Myanmar', 'Noto Sans Tai Le', 'Noto Sans Tai Tham',
-        'Noto Sans Tai Viet', 'Noto Sans New Tai Lue',
-        'Noto Sans Hebrew', 'Noto Sans Syriac', 'Noto Sans Thaana',
-        'Noto Sans Mandaic', 'Noto Sans Samaritan',
-        'Noto Sans Imperial Aramaic', 'Noto Sans Nabataean',
-        'Noto Sans Georgian', 'Noto Sans Armenian', 'Noto Sans Ethiopic',
-        'Noto Sans Mongolian', 'Noto Serif Tibetan',
-        'Noto Sans Runic', 'Noto Sans Ogham', 'Noto Sans Glagolitic',
-        'Noto Sans Gothic', 'Noto Sans Old Italic', 'Noto Sans Old Persian',
-        'Noto Sans Old Turkic', 'Noto Sans Phoenician', 'Noto Sans Ugaritic',
-        'Noto Sans Cuneiform', 'Noto Sans Egyptian Hieroglyphs',
-        'Noto Sans Linear A', 'Noto Sans Linear B',
-        'Noto Sans Duployan', 'Noto Sans SignWriting',
-        'Noto Sans Canadian Aboriginal',
-        'Noto Sans Tifinagh', 'Noto Sans Vai', 'Noto Sans Bamum',
-        'Noto Sans Miao', 'Noto Sans Yi', 'Noto Sans Lisu',
-        'Noto Sans Adlam', 'Noto Sans Batak', 'Noto Sans Buginese',
-        'Noto Sans Javanese', 'Noto Sans Sundanese', 'Noto Sans Balinese',
-        'Noto Sans Rejang', 'Noto Sans Hanunoo', 'Noto Sans Tagalog',
-        'Noto Sans Tagbanwa', 'Noto Sans Buhid',
-        'Noto Sans Meetei Mayek', 'Noto Sans Kayah Li',
-        'Noto Sans Lepcha', 'Noto Sans Limbu', 'Noto Sans Ol Chiki',
-        'Noto Sans NKo', 'Noto Sans Osmanya', 'Noto Sans Deseret',
-        'Noto Sans Shavian', 'Noto Sans Osage', 'Noto Sans Elbasan',
-        'Noto Sans Coptic', 'Noto Sans Chakma', 'Noto Sans Cham',
-        'Noto Sans Pahawh Hmong', 'Noto Sans Masaram Gondi',
-        'Noto Sans Soyombo', 'Noto Sans Zanabazar Square',
-        'Noto Sans Marchen', 'Noto Sans Newa', 'Noto Sans Wancho',
-        'Noto Traditional Nushu', 'Noto Serif Tangut',
-        'Noto Sans Hanifi Rohingya',
-        // CJK last — largest files, slowest to search
-        'Noto Sans CJK', 'Noto Sans CJK SC', 'Noto Sans CJK TC',
-        'Noto Sans CJK JP', 'Noto Sans CJK KR', 'Noto Serif CJK',
-        // Windows
-        'Segoe UI Symbol', 'Segoe UI Emoji', 'Arial',
-    ];
-
-    function guessWeight(f) {
-        if (/Black/i.test(f))                         return 900;
-        if (/ExtraBold|Extra[-_]Bold|Heavy/i.test(f)) return 800;
-        if (/Bold/i.test(f))                          return 700;
-        if (/SemiBold|Semi[-_]Bold/i.test(f))        return 600;
-        if (/Medium/i.test(f))                        return 500;
-        if (/Light/i.test(f))                         return 300;
-        if (/Thin|ExtraLight/i.test(f))               return 100;
-        return 400;
-    }
-
-    function guessStyle(f) {
-        return /Italic|Oblique/i.test(f) ? 'italic' : 'normal';
-    }
-
-    function deriveName(filename) {
-        for (const rule of NAME_MAP) {
-            if (rule.r.test(filename)) return rule.n;
-        }
-        return path.basename(filename, path.extname(filename))
-            .replace(/[-_](Regular|Bold|Italic|Light|Medium|Thin|Black|SemiBold|ExtraBold)/gi, '')
-            .replace(/[-_]/g, ' ').trim() || 'Unknown';
-    }
-
-    // ── Scan ──────────────────────────────────────────────────────────────────
+// Register all system fonts with node-canvas at startup
+// Canvas uses Pango/FreeType which handles ALL scripts natively
+// This means names rendered via canvas will NEVER show tofu
+;(function registerAllFonts() {
+    const loaded = new Set();
+    let count = 0;
     for (const dir of SCAN_DIRS) {
         if (!fs.existsSync(dir)) continue;
         let files;
         try { files = fs.readdirSync(dir); } catch { continue; }
-
         for (const file of files) {
-            // Only TTF and OTF — skip TTC collections entirely
             if (!/\.(ttf|otf)$/i.test(file)) continue;
-
             const fullPath = path.join(dir, file);
             if (loaded.has(fullPath)) continue;
             loaded.add(fullPath);
-
-            // Skip known-incompatible fonts before even reading them
-            if (SKIP_PATTERNS.some(p => p.test(file))) {
-                console.log(`⏭️  Skipped (bitmap/collection): ${file}`);
-                skipped++;
-                continue;
-            }
-
-            let data;
-            try { data = fs.readFileSync(fullPath); }
-            catch (e) { console.warn(`⚠️  Cannot read: ${file}`); continue; }
-
-            // ── VALIDATE with opentype.js before giving to Satori ─────────────
-            // This is the key fix: if opentype can't parse it, Satori will crash
-            if (!isSatoriCompatible(data)) {
-                console.log(`⏭️  Skipped (no outlines/incompatible): ${file}`);
-                skipped++;
-                continue;
-            }
-
-            validated++;
-            const name   = deriveName(file);
-            const weight = guessWeight(file);
-            const style  = guessStyle(file);
-
-            families.push({ name, data, weight, style });
-
-            // Register with node-canvas (for renderChunkImg name rendering)
-            try { registerFont(fullPath, { family: name }); } catch (_) {}
-
-            console.log(`✅ [${name}] w${weight} ${style} ← ${file}`);
+            try {
+                registerFont(fullPath, { family: deriveCanvasName(file) });
+                count++;
+            } catch (_) {}
         }
     }
+    console.log(`✅ Registered ${count} fonts with node-canvas`);
+})();
 
-    // ── Sort by priority ──────────────────────────────────────────────────────
-    families.sort((a, b) => {
-        const ai = PRIORITY.indexOf(a.name);
-        const bi = PRIORITY.indexOf(b.name);
-        return (ai === -1 ? 9999 : ai) - (bi === -1 ? 9999 : bi);
-    });
+// Canvas font stack — all families registered above are available
+const CANVAS_FONT = [
+    'Noto Sans', 'Noto Sans Symbols2', 'Noto Sans Symbols',
+    'Noto Sans Math', 'Noto Music',
+    'Noto Sans CJK', 'Noto Sans Arabic', 'Noto Sans Devanagari',
+    'Noto Sans Bengali', 'Noto Sans Tamil', 'Noto Sans Telugu',
+    'Noto Sans Thai', 'Noto Sans Hebrew', 'Noto Sans Georgian',
+    'Noto Sans Armenian', 'Noto Sans Ethiopic', 'Noto Sans Mongolian',
+    'Noto Sans Runic', 'Noto Sans Gothic', 'Noto Sans Cuneiform',
+    'Noto Sans Egyptian Hieroglyphs', 'Noto Sans Duployan',
+    'sans-serif'
+].map(f => `'${f}'`).join(', ');
 
-    console.log(`\n📦 Font pipeline ready:`);
-    console.log(`   ✅ Loaded   : ${validated} font faces`);
-    console.log(`   ⏭️  Skipped  : ${skipped} incompatible files`);
-    console.log(`   📋 Families : ${[...new Set(families.map(f => f.name))].length} unique families\n`);
+// =============================================================================
+// SHARED BROWSER — created once, reused for every request
+// This is the #1 speed optimization: browser startup = ~2s, reuse = ~0ms
+// =============================================================================
+let sharedBrowser = null;
+let browserLock   = false;
 
-    if (families.length === 0) {
-        console.error('❌ CRITICAL: No fonts loaded! All text will be tofu.');
+async function getBrowser() {
+    // If browser exists and is still connected, return it immediately
+    if (sharedBrowser && sharedBrowser.connected) return sharedBrowser;
+
+    // Simple lock to prevent multiple simultaneous launches
+    if (browserLock) {
+        // Wait for the other launch to finish
+        await new Promise(r => setTimeout(r, 100));
+        return getBrowser();
     }
 
-    return families;
+    browserLock = true;
+    try {
+        console.log('🌐 Launching Chromium browser...');
+        sharedBrowser = await puppeteer.launch({
+            headless: true,
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-gpu',
+                '--disable-dev-shm-usage',
+                '--no-zygote',
+                '--single-process',
+                '--hide-scrollbars',
+                '--disable-web-security',
+                // Performance: disable unused features
+                '--disable-extensions',
+                '--disable-background-networking',
+                '--disable-default-apps',
+                '--disable-sync',
+                '--disable-translate',
+                '--metrics-recording-only',
+                '--no-first-run',
+                '--safebrowsing-disable-auto-update',
+                // Memory: reduce footprint
+                '--js-flags=--max-old-space-size=512',
+            ]
+        });
+        sharedBrowser.on('disconnected', () => {
+            console.log('⚠️  Browser disconnected — will relaunch on next request');
+            sharedBrowser = null;
+        });
+        console.log('✅ Browser ready');
+    } finally {
+        browserLock = false;
+    }
+    return sharedBrowser;
 }
 
-// Load once at startup — never reload per request
-const fonts = loadFonts();
+// Pre-warm browser at startup so first request is fast
+getBrowser().catch(e => console.error('⚠️  Browser pre-warm failed:', e.message));
 
 // =============================================================================
-// BOT TOKEN
+// PAGE POOL — reuse pages instead of creating/closing per request
+// Creating a new page costs ~100-200ms. Reusing a pooled page costs ~0ms.
 // =============================================================================
-const BOT_TOKEN = process.env.BOT_TOKEN;
-if (!BOT_TOKEN) {
-    console.error('❌ FATAL: BOT_TOKEN is missing in environment variables.');
-    process.exit(1);
+const PAGE_POOL     = [];
+const PAGE_POOL_MAX = 3; // max concurrent pages
+
+async function acquirePage() {
+    // Return a free page from pool if available
+    if (PAGE_POOL.length > 0) {
+        const page = PAGE_POOL.pop();
+        // Make sure it's still usable
+        try {
+            await page.evaluate(() => true);
+            return page;
+        } catch {
+            // Page is dead, create a new one
+        }
+    }
+    // Create a new page
+    const browser = await getBrowser();
+    const page    = await browser.newPage();
+
+    // Disable images/css/fonts from EXTERNAL sources for speed
+    // We use base64 data URIs for everything so this is safe
+    await page.setRequestInterception(true);
+    page.on('request', req => {
+        const url = req.url();
+        // Block external requests EXCEPT emoji CDN (we need those images)
+        if (
+            url.startsWith('data:') ||
+            url.includes('cdn.jsdelivr.net') ||
+            url.includes('fonts.gstatic.com')
+        ) {
+            req.continue();
+        } else if (
+            url.startsWith('http') &&
+            !url.includes('cdn.jsdelivr.net')
+        ) {
+            // Block Google Fonts and other external CSS/JS — we use inline CSS
+            req.abort();
+        } else {
+            req.continue();
+        }
+    });
+
+    await page.setViewport({ width: 5000, height: 5000, deviceScaleFactor: 1 });
+    return page;
+}
+
+function releasePage(page) {
+    if (PAGE_POOL.length < PAGE_POOL_MAX) {
+        PAGE_POOL.push(page);
+    } else {
+        page.close().catch(() => {});
+    }
 }
 
 // =============================================================================
@@ -405,32 +312,23 @@ function escapeHtml(t) {
 }
 
 // =============================================================================
-// NAME RENDERING via node-canvas
-// node-canvas uses system fonts (Pango/FreeType) which support ALL scripts.
-// We render name text to tiny canvas PNGs and embed them as <img> tags.
-// This means names NEVER go through Satori's font lookup = no tofu in names.
+// NAME RENDERING — canvas → base64 PNG
+// node-canvas uses Pango which calls into FreeType + system fonts.
+// Every font we registered above is available here.
+// Result: names with ANY Unicode script render perfectly with NO tofu.
 // =============================================================================
 function renderChunkImg(text, fontSize, color) {
-    const fontStack = [
-        'Noto Sans', 'Noto Sans Symbols2', 'Noto Sans Symbols',
-        'Noto Sans Math', 'Noto Music',
-        'Noto Sans CJK', 'Noto Sans Arabic', 'Noto Sans Devanagari',
-        'Noto Sans Thai', 'Noto Sans Hebrew', 'sans-serif'
-    ].join(', ');
-
     const tmp = createCanvas(1, 1);
     const tc  = tmp.getContext('2d');
-    tc.font   = `600 ${fontSize}px ${fontStack}`;
-    const w   = Math.max(1, Math.ceil(tc.measureText(text).width) + 2);
+    tc.font   = `600 ${fontSize}px ${CANVAS_FONT}`;
+    const w   = Math.max(1, Math.ceil(tc.measureText(text).width) + 4);
     const h   = Math.max(1, Math.ceil(fontSize * 1.5));
-
     const cv  = createCanvas(w, h);
     const ctx = cv.getContext('2d');
-    ctx.font         = `600 ${fontSize}px ${fontStack}`;
+    ctx.font         = `600 ${fontSize}px ${CANVAS_FONT}`;
     ctx.fillStyle    = color;
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, 1, h / 2);
-
+    ctx.fillText(text, 2, h / 2);
     return `data:image/png;base64,${cv.toBuffer('image/png').toString('base64')}`;
 }
 
@@ -438,17 +336,19 @@ function nameToHtml(text, color, fontSize) {
     if (!text) return '';
     const seg = new Intl.Segmenter();
     let res = '', chunk = '';
-
     const flushChunk = () => {
         if (!chunk) return;
         res += `<img src="${renderChunkImg(chunk, fontSize, color)}" `
-             + `style="height:1em;vertical-align:middle;margin:0;padding:0;display:inline-flex;"/>`;
+             + `style="height:1em;vertical-align:middle;margin:0;padding:0;display:inline-block;"/>`;
         chunk = '';
     };
-
     for (const { segment: c } of seg.segment(text)) {
-        if (IS_EMOJI.test(c)) { flushChunk(); res += `<img src="${toAppleEmojiUrl(c)}" style="height:1.2em;width:1.2em;vertical-align:middle;"/>`; }
-        else chunk += c;
+        if (IS_EMOJI.test(c)) {
+            flushChunk();
+            res += `<img src="${toAppleEmojiUrl(c)}" class="emoji" onerror="this.style.display='none'"/>`;
+        } else {
+            chunk += c;
+        }
     }
     flushChunk();
     return res;
@@ -461,9 +361,14 @@ function toAppleEmojiUrl(emoji) {
     const r = []; let c = 0, p = 0;
     for (let i = 0; i < emoji.length; i++) {
         c = emoji.charCodeAt(i);
-        if (p) { r.push((0x10000 + ((p - 0xD800) << 10) + (c - 0xDC00)).toString(16)); p = 0; }
-        else if (0xD800 <= c && c <= 0xDBFF) p = c;
-        else r.push(c.toString(16));
+        if (p) {
+            r.push((0x10000 + ((p - 0xD800) << 10) + (c - 0xDC00)).toString(16));
+            p = 0;
+        } else if (0xD800 <= c && c <= 0xDBFF) {
+            p = c;
+        } else {
+            r.push(c.toString(16));
+        }
     }
     let cp = r.join('-');
     if (!cp.includes('200d')) cp = cp.replace(/-fe0f/g, '');
@@ -479,8 +384,8 @@ const ECACHE = new Map();
 
 async function getPremiumEmojiB64(id) {
     if (ECACHE.has(id)) return ECACHE.get(id);
-    console.log(`🔍 Fetching premium emoji: ${id}`);
     try {
+        const BOT_TOKEN = process.env.BOT_TOKEN;
         const { data: d1 } = await axios.post(
             `https://api.telegram.org/bot${BOT_TOKEN}/getCustomEmojiStickers`,
             { custom_emoji_ids: [id] }, { timeout: 5000 }
@@ -497,11 +402,11 @@ async function getPremiumEmojiB64(id) {
         const b64 = `data:image/png;base64,${(await sharp(raw).resize(128, 128).png().toBuffer()).toString('base64')}`;
         ECACHE.set(id, b64);
         return b64;
-    } catch (e) { console.error(`❌ Premium emoji fetch failed: ${id}`, e.message); return null; }
+    } catch { return null; }
 }
 
 // =============================================================================
-// MESSAGE HTML BUILDER
+// MESSAGE HTML BUILDER — unchanged from your original working version
 // =============================================================================
 async function msgToHtml(text, entities = []) {
     if (!text) return '';
@@ -523,16 +428,19 @@ async function msgToHtml(text, entities = []) {
         let out = '';
         for (const { segment: c } of seg.segment(str)) {
             if (IS_EMOJI.test(c))
-                out += `<img src="${toAppleEmojiUrl(c)}" style="height:1.2em;width:1.2em;vertical-align:middle;"/>`;
-            else out += escapeHtml(c);
+                out += `<img src="${toAppleEmojiUrl(c)}" class="emoji"/>`;
+            else
+                out += escapeHtml(c);
         }
         return out.replace(/\n/g, '<br/>');
     };
 
     for (let i = 0; i < tags.length; i++) {
         const t = tags[i];
-        if (t.pos > cursor) { html += applyText(text.substring(cursor, t.pos)); cursor = t.pos; }
-
+        if (t.pos > cursor) {
+            html += applyText(text.substring(cursor, t.pos));
+            cursor = t.pos;
+        }
         if (t.type === 'open') {
             const e = t.info;
             if (['url','text_url','mention','bot_command'].includes(e.type)) {
@@ -540,31 +448,31 @@ async function msgToHtml(text, entities = []) {
                 if (plain.length > 0 && /[a-z0-9\u0D80-\u0DFF]$/i.test(plain) && !html.endsWith('<br/>'))
                     html += '<br/>';
             }
-            if      (e.type === 'bold')        html += '<b>';
-            else if (e.type === 'italic')      html += '<i>';
-            else if (e.type === 'underline')   html += '<u>';
+            if      (e.type === 'bold')          html += '<b>';
+            else if (e.type === 'italic')        html += '<i>';
+            else if (e.type === 'underline')     html += '<u>';
             else if (e.type === 'strikethrough') html += '<s>';
-            else if (e.type === 'code')        html += '<code>';
-            else if (e.type === 'pre')         html += '<pre>';
-            else if (e.type === 'spoiler')     html += '<span style="background:rgba(255,255,255,0.15);color:transparent;border-radius:4px;">';
+            else if (e.type === 'code')          html += '<code>';
+            else if (e.type === 'pre')           html += '<pre>';
+            else if (e.type === 'spoiler')       html += '<span class="spoiler">';
             else if (e.type === 'blockquote' || e.type === 'expandable_blockquote')
-                html += '<span style="display:block;border-left:3px solid #64b5f6;padding-left:10px;margin:4px 0;font-style:italic;color:#7f91a4;">';
+                html += '<span class="blockquote">';
             else if (['url','text_url','mention','bot_command'].includes(e.type))
-                html += '<span style="color:#64b5f6;">';
+                html += '<span class="link">';
             else if (e.type === 'custom_emoji') {
                 const b64 = await getPremiumEmojiB64(e.custom_emoji_id);
-                if (b64) html += `<img src="${b64}" style="height:1.3em;width:1.3em;vertical-align:middle;"/>`;
+                if (b64) html += `<img src="${b64}" class="msg-emoji"/>`;
                 cursor = e.offset + e.length;
                 while (i + 1 < tags.length && tags[i + 1].info === e) i++;
             }
         } else {
             const e = t.info;
-            if      (e.type === 'bold')        html += '</b>';
-            else if (e.type === 'italic')      html += '</i>';
-            else if (e.type === 'underline')   html += '</u>';
+            if      (e.type === 'bold')          html += '</b>';
+            else if (e.type === 'italic')        html += '</i>';
+            else if (e.type === 'underline')     html += '</u>';
             else if (e.type === 'strikethrough') html += '</s>';
-            else if (e.type === 'code')        html += '</code>';
-            else if (e.type === 'pre')         html += '</pre>';
+            else if (e.type === 'code')          html += '</code>';
+            else if (e.type === 'pre')           html += '</pre>';
             else if (['spoiler','blockquote','expandable_blockquote',
                       'url','text_url','mention','bot_command'].includes(e.type))
                 html += '</span>';
@@ -579,11 +487,16 @@ async function msgToHtml(text, entities = []) {
 // =============================================================================
 async function dummyAvatar(f, l, color) {
     const S = 200;
-    const cv = createCanvas(S, S); const ctx = cv.getContext('2d');
-    ctx.fillStyle = color; ctx.beginPath();
-    ctx.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.font = `bold ${S * 0.38}px sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const cv  = createCanvas(S, S);
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle    = '#fff';
+    ctx.font         = `bold ${S * 0.38}px ${CANVAS_FONT}`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
     ctx.fillText(((f?.[0] || '') + (l?.[0] || '')).toUpperCase().substring(0, 2) || '?', S / 2, S / 2);
     return cv.toBuffer('image/png');
 }
@@ -596,20 +509,25 @@ async function createImage(
     nameColorId, inputImageBuffer, replySender, replyMessage,
     replysendercolor, messageEntities = []
 ) {
+    const BOT_TOKEN = process.env.BOT_TOKEN;
+
     let msgList = Array.isArray(firstName)
         ? firstName
-        : [{ firstName, lastName, customemojiid, message, nameColorId,
-             inputImageBuffer, replySender, replyMessage, replysendercolor,
-             entities: messageEntities, id: '1', isAbsoluteLast: true }];
+        : [{
+            firstName, lastName, customemojiid, message, nameColorId,
+            inputImageBuffer, replySender, replyMessage, replysendercolor,
+            entities: messageEntities, id: '1', isAbsoluteLast: true
+        }];
 
-    const SCALE   = 2.0;
+    const SCALE   = 4.5;
     const PP_SIZE = 38 * SCALE;
     const NAME_FS = 16 * SCALE;
     const MSG_FS  = 16 * SCALE;
 
-    const items = await Promise.all(msgList.map(async d => {
-        const name     = `${d.firstName || ''} ${d.lastName || ''}`.trim() || 'User';
-        const color    = getTelegramColor(d.nameColorId);
+    // ── Pre-process all messages in parallel ──────────────────────────────────
+    const rows = await Promise.all(msgList.map(async (d) => {
+        const name    = `${d.firstName || ''} ${d.lastName || ''}`.trim() || 'User';
+        const color   = getTelegramColor(d.nameColorId);
         const nameHtml = nameToHtml(name, color, NAME_FS);
 
         const rawAvatar = d.inputImageBuffer
@@ -620,7 +538,9 @@ async function createImage(
         let mediaB64 = null;
         if (d.mediaBuffer) {
             try {
-                const mb = await sharp(d.mediaBuffer).resize(800, 800, { fit: 'inside' }).png().toBuffer();
+                const mb = await sharp(d.mediaBuffer)
+                    .resize(1000, 1000, { fit: 'inside', kernel: 'lanczos3' })
+                    .png().toBuffer();
                 mediaB64 = `data:image/png;base64,${mb.toString('base64')}`;
             } catch { mediaB64 = null; }
         }
@@ -632,151 +552,159 @@ async function createImage(
         const statusB64 = d.customemojiid ? await getPremiumEmojiB64(d.customemojiid) : null;
         const msgHtml   = await msgToHtml(d.message || '', d.entities || []);
 
-        return { name, color, nameHtml, avatarB64, mediaB64, isSticker,
-                 rColor, rName, rMsg: d.replyMessage, statusB64, msgHtml,
-                 userId: d.id || name, fName, isAbsoluteLast: d.isAbsoluteLast };
+        return {
+            name, color, nameHtml, avatarB64, mediaB64, isSticker,
+            rColor, rName, rMsg: d.replyMessage, statusB64, msgHtml,
+            userId: d.id || name, fName, isAbsoluteLast: d.isAbsoluteLast
+        };
     }));
 
-    const rows = items.map((m, i) => {
-        const prev = items[i - 1], next = items[i + 1];
+    // ── Compute message grouping ──────────────────────────────────────────────
+    const items = rows.map((m, i) => {
+        const prev = rows[i - 1], next = rows[i + 1];
         const samePrev = prev && prev.userId === m.userId && !m.fName;
         const sameNext = next && next.userId === m.userId && !next.fName;
-        let groupClass = 'single';
-        if      (samePrev && sameNext) groupClass = 'middle';
-        else if (samePrev)             groupClass = 'last';
-        else if (sameNext)             groupClass = 'first';
-        return { ...m, groupClass, showName: !samePrev && !m.isSticker, showAvatar: !sameNext, samePrev };
+        let groupClass = 'single-message';
+        if      (samePrev && sameNext) groupClass = 'middle-in-group';
+        else if (samePrev)             groupClass = 'last-in-group';
+        else if (sameNext)             groupClass = 'first-in-group';
+        const breakClass = (!samePrev && i > 0) ? 'sender-break' : '';
+        return { ...m, groupClass, breakClass, showName: !samePrev && !m.isSticker, showAvatar: !sameNext };
     });
 
     const MSG_IN = '#111112';
 
-    const nodes = {
-        type: 'div',
-        props: {
-            style: { display: 'flex', flexDirection: 'column', padding: 40 * SCALE, background: 'transparent' },
-            children: rows.map(m => {
-                const isTail = m.groupClass === 'last' || m.groupClass === 'single';
-                return {
-                    type: 'div',
-                    props: {
-                        style: {
-                            display: 'flex', alignItems: 'flex-end', position: 'relative',
-                            width: 'auto', margin: `${2 * SCALE}px 0`,
-                            marginTop: (!m.samePrev && items.indexOf(m) > 0) ? 10 * SCALE : 2 * SCALE,
-                            gap: 6 * SCALE
-                        },
-                        children: [
-                            {
-                                type: 'div',
-                                props: {
-                                    style: {
-                                        width: PP_SIZE, height: PP_SIZE, borderRadius: '50%',
-                                        backgroundSize: 'cover', backgroundImage: `url(${m.avatarB64})`,
-                                        border: `${1 * SCALE}px solid rgba(255,255,255,0.05)`,
-                                        opacity: m.showAvatar ? 1 : 0, flexShrink: 0
-                                    }
-                                }
-                            },
-                            {
-                                type: 'div',
-                                props: {
-                                    style: {
-                                        position: 'relative', padding: `${10 * SCALE}px ${16 * SCALE}px`,
-                                        background: m.isSticker ? 'transparent' : MSG_IN,
-                                        color: '#fff', fontSize: MSG_FS, lineHeight: 1.4,
-                                        display: 'flex', flexDirection: 'column', width: 'auto',
-                                        maxWidth: 450 * SCALE, borderRadius: 18 * SCALE,
-                                        borderTopLeftRadius: (m.groupClass === 'middle' || m.groupClass === 'last') ? 5 * SCALE : 18 * SCALE,
-                                        borderBottomLeftRadius: (m.groupClass === 'single' || m.groupClass === 'last') ? 0 : 5 * SCALE
-                                    },
-                                    children: [
-                                        isTail && !m.isSticker ? {
-                                            type: 'svg',
-                                            props: {
-                                                width: 8 * SCALE, height: 10 * SCALE,
-                                                style: { position: 'absolute', bottom: 0, left: -8 * SCALE + 0.5 },
-                                                children: [{ type: 'path', props: { d: `M 8 0 L 8 10 L 0 10 Q 4 10 8 0`, fill: MSG_IN } }]
-                                            }
-                                        } : null,
+    // ── CSS — identical to your original, NO changes to layout/styling ────────
+    const css = `
+:root { --r: ${20 * SCALE}px; --rs: ${5 * SCALE}px; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Noto Sans','Noto Sans Symbols2','Noto Sans Symbols','Noto Sans CJK','Noto Sans Arabic','Noto Sans Devanagari',sans-serif; background: transparent; -webkit-font-smoothing: antialiased; }
+#wrap { display: inline-flex; flex-direction: column; gap: 0; padding: ${30 * SCALE}px; background: transparent; }
+.bubble-container { display: flex; align-items: flex-end; position: relative; width: max-content; min-width: ${100 * SCALE}px; max-width: ${400 * SCALE}px; margin: ${2 * SCALE}px ${10 * SCALE}px; gap: ${6 * SCALE}px; }
+.bubble-container.sender-break { margin-top: ${10 * SCALE}px; }
+.bubble-pp { width: ${PP_SIZE}px; height: ${PP_SIZE}px; border-radius: 50%; flex-shrink: 0; margin-right: ${10 * SCALE}px; background-size: cover; background-position: center; border: ${1 * SCALE}px solid rgba(255,255,255,0.05); }
+.bubble-pp.hidden { opacity: 0; pointer-events: none; }
+.bubble { position: relative; padding: ${11 * SCALE}px ${24 * SCALE}px ${11 * SCALE}px ${16 * SCALE}px; background: ${MSG_IN}; color: #fff; font-size: ${MSG_FS}px; line-height: 1.48; width: fit-content; max-width: 100%; overflow-wrap: break-word; border-radius: var(--r); }
+.bubble-container.in.single-message .bubble { border-bottom-left-radius: 0 !important; }
+.bubble-container.in.first-in-group .bubble { border-bottom-left-radius: var(--rs); border-top-left-radius: var(--r); }
+.bubble-container.in.middle-in-group .bubble { border-top-left-radius: var(--rs); border-bottom-left-radius: var(--rs); }
+.bubble-container.in.last-in-group .bubble { border-top-left-radius: var(--rs); border-bottom-left-radius: 0 !important; }
+.bubble::before { content: ""; display: none; position: absolute; }
+.bubble-container.in.last-in-group .bubble::before, .bubble-container.in.single-message .bubble::before { display: block; bottom: 0; left: -${8 * SCALE}px; width: 0; height: 0; border-style: solid; border-width: 0 0 ${10 * SCALE}px ${8 * SCALE}px; border-color: transparent transparent ${MSG_IN} transparent; }
+.bubble-container.is-sticker { max-width: ${200 * SCALE}px; align-items: flex-end; margin-bottom: ${18 * SCALE}px; gap: 0; }
+.bubble-container.is-sticker .bubble { background: transparent !important; box-shadow: none !important; padding: 0 !important; }
+.bubble-container.is-sticker .bubble::before { display: none !important; }
+.sticker-img { width: ${200 * SCALE}px; display: block; border-radius: ${8 * SCALE}px; }
+.bubble-name { font-size: ${NAME_FS}px; font-weight: 600; margin-bottom: ${4 * SCALE}px; display: flex; align-items: center; white-space: nowrap; }
+.f-line { font-size: ${MSG_FS * 0.75}px; color: #64b5f6; margin-bottom: ${4 * SCALE}px; opacity: 0.9; }
+.premium-emoji { width: ${18 * SCALE}px; height: ${18 * SCALE}px; margin-left: ${2 * SCALE}px; }
+.link { color: #64b5f6; display: inline-block; word-break: break-all; text-decoration: none; }
+.reply-block { background: rgba(255,255,255,0.06); border-radius: ${6 * SCALE}px; padding: ${6 * SCALE}px ${10 * SCALE}px; border-left: ${4 * SCALE}px solid; margin-bottom: ${10 * SCALE}px; max-width: ${300 * SCALE}px; overflow: hidden; }
+.reply-name { font-size: ${MSG_FS * 0.72}px; font-weight: 600; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reply-text { font-size: ${MSG_FS * 0.7}px; color: #7f91a4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.emoji { height: 1.2em; width: 1.2em; vertical-align: middle; }
+.msg-emoji { height: 1.3em; width: 1.3em; vertical-align: middle; }
+code { font-family: 'Consolas', 'Courier New', monospace; background: rgba(255,255,255,0.1); padding: 0.1em 0.3em; border-radius: 4px; font-size: 0.9em; }
+pre { font-family: 'Consolas', 'Courier New', monospace; background: rgba(255,255,255,0.08); padding: 8px; border-radius: 6px; margin: 4px 0; display: block; white-space: pre-wrap; word-break: break-all; font-size: 0.85em; border-left: 3px solid rgba(255,255,255,0.2); }
+.spoiler { background: rgba(255,255,255,0.15); color: transparent; border-radius: 4px; filter: blur(5px); }
+.blockquote { display: block; border-left: 3px solid #64b5f6; padding-left: 10px; margin: 4px 0; font-style: italic; color: #7f91a4; }
+`;
 
-                                        m.isSticker ? {
-                                            type: 'img',
-                                            props: { src: m.mediaB64, style: { width: 200 * SCALE, borderRadius: 8 * SCALE } }
-                                        } : {
-                                            type: 'div',
-                                            props: {
-                                                style: { display: 'flex', flexDirection: 'column' },
-                                                children: [
-                                                    m.fName ? {
-                                                        type: 'div',
-                                                        props: { style: { fontSize: MSG_FS * 0.75, color: '#64b5f6', marginBottom: 4 * SCALE }, children: `Forwarded from ${m.fName}` }
-                                                    } : null,
-
-                                                    m.showName ? {
-                                                        type: 'div',
-                                                        props: {
-                                                            style: { fontSize: NAME_FS, fontWeight: 600, color: m.color, marginBottom: 4 * SCALE, display: 'flex', alignItems: 'center' },
-                                                            children: [
-                                                                parse(m.nameHtml),
-                                                                m.statusB64 ? { type: 'img', props: { src: m.statusB64, style: { width: 18 * SCALE, height: 18 * SCALE, marginLeft: 2 * SCALE } } } : null
-                                                            ].filter(Boolean)
-                                                        }
-                                                    } : null,
-
-                                                    m.rName ? {
-                                                        type: 'div',
-                                                        props: {
-                                                            style: { background: 'rgba(255,255,255,0.06)', borderRadius: 6 * SCALE, padding: `${6 * SCALE}px`, borderLeft: `${4 * SCALE}px solid ${m.rColor}`, marginBottom: 10 * SCALE },
-                                                            children: [
-                                                                { type: 'div', props: { style: { fontSize: MSG_FS * 0.7, fontWeight: 600, color: m.rColor }, children: parse(m.rName) } },
-                                                                { type: 'div', props: { style: { fontSize: MSG_FS * 0.65, color: '#7f91a4' }, children: m.rMsg } }
-                                                            ]
-                                                        }
-                                                    } : null,
-
-                                                    m.mediaB64 ? {
-                                                        type: 'img',
-                                                        props: { src: m.mediaB64, style: { width: 400 * SCALE, borderRadius: 8 * SCALE, marginBottom: 6 * SCALE } }
-                                                    } : null,
-
-                                                    m.msgHtml ? {
-                                                        type: 'div',
-                                                        props: { style: { display: 'flex', flexDirection: 'column' }, children: [parse(m.msgHtml)] }
-                                                    } : null
-                                                ].filter(Boolean)
-                                            }
-                                        }
-                                    ].filter(Boolean)
-                                }
-                            }
-                        ]
-                    }
-                };
-            })
+    // ── Build HTML body — identical structure to your original ────────────────
+    const htmlBody = items.map(m => {
+        let bInner = '';
+        if (m.isSticker) {
+            bInner = m.mediaB64
+                ? `<img src="${m.mediaB64}" class="sticker-img"/>`
+                : `<div style="font-style:italic;color:#7f91a4;font-size:0.7em">[Sticker]</div>`;
+        } else {
+            if (m.fName)    bInner += `<div class="f-line">Forwarded from ${m.fName}</div>`;
+            if (m.showName) bInner += `<div class="bubble-name" style="color:${m.color}">${m.nameHtml}${m.statusB64 ? `<img src="${m.statusB64}" class="premium-emoji"/>` : ''}</div>`;
+            if (m.rName)    bInner += `<div class="reply-block" style="border-left-color:${m.rColor}"><div class="reply-name" style="color:${m.rColor}">${m.rName}</div><div class="reply-text">${escapeHtml(m.rMsg)}</div></div>`;
+            if (m.mediaB64) bInner += `<img src="${m.mediaB64}" class="sticker-img" style="margin-bottom:${6 * SCALE}px;"/>`;
+            if (m.msgHtml)  bInner += `<div class="bubble-content">${m.msgHtml}</div>`;
         }
-    };
+        return `
+<div class="bubble-container in ${m.groupClass} ${m.isAbsoluteLast ? 'is-absolute-last' : ''} ${m.isSticker ? 'is-sticker' : ''} ${m.breakClass}">
+    <div class="bubble-pp ${m.showAvatar ? '' : 'hidden'}" style="background-image:url(${m.avatarB64})"></div>
+    <div class="bubble">${bInner}</div>
+</div>`;
+    }).join('');
 
-    console.log('🎨 Starting Satori render...');
-    const t0 = Date.now();
-    const svg = await satori(nodes, { width: 1200, height: 1500, fonts });
-    console.log(`✅ Satori done in ${Date.now() - t0}ms`);
+    // ── Full HTML — NO external font requests (all fonts are system/inline) ───
+    // Removed Google Fonts link — that was causing networkidle0 to wait ~500ms
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>${css}</style>
+</head>
+<body>
+<div id="wrap">${htmlBody}</div>
+</body>
+</html>`;
 
-    const resvg = new Resvg(svg, { background: 'rgba(0,0,0,0)', fitTo: { mode: 'original' } });
-    const pngBuffer = resvg.render().asPng();
+    // ── Render via Puppeteer ──────────────────────────────────────────────────
+    console.log('🎨 Starting Puppeteer render...');
+    const t0   = Date.now();
+    const page = await acquirePage();
 
-    return await sharp(pngBuffer)
-        .trim({ threshold: 5 })
-        .sharpen({ sigma: 0.5 })
-        .webp({ quality: 100, lossless: true })
-        .toBuffer();
+    try {
+        // Use domcontentloaded instead of networkidle0 — MUCH faster
+        // All our content is inline (base64) so there's nothing to wait for
+        // EXCEPT emoji images from CDN — we handle those with waitForSelector
+        await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 15000 });
+
+        // Wait for emoji images to load (they come from CDN)
+        // Use a short timeout — if CDN is slow we still render
+        await page.evaluate(() => {
+            return new Promise(resolve => {
+                const imgs = [...document.querySelectorAll('img')];
+                if (imgs.length === 0) return resolve();
+                let loaded = 0;
+                const done = () => { if (++loaded >= imgs.length) resolve(); };
+                const timeout = setTimeout(resolve, 3000); // max 3s wait
+                imgs.forEach(img => {
+                    if (img.complete) done();
+                    else { img.onload = done; img.onerror = done; }
+                });
+            });
+        });
+
+        const element = await page.$('#wrap');
+        if (!element) throw new Error('Could not find #wrap element');
+
+        const screenshot = await element.screenshot({
+            omitBackground: true,
+            type: 'png',
+        });
+
+        console.log(`✅ Puppeteer render done in ${Date.now() - t0}ms`);
+
+        return await sharp(screenshot)
+            .trim({ threshold: 5 })
+            .sharpen({ sigma: 0.5 })
+            .webp({ quality: 100, lossless: true })
+            .toBuffer();
+
+    } finally {
+        // Return page to pool instead of closing it
+        releasePage(page);
+    }
 }
 
 module.exports = createImage;
 
+// =============================================================================
+// HEALTH CHECK SERVER
+// =============================================================================
 if (require.main === module) {
     const http = require('http');
+    const port = process.env.PORT || 7860;
     http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('Satori Engine Running! 🚀\n');
-    }).listen(process.env.PORT || 7860);
+        res.end('Premium Quoter Engine is Running! 🚀\n');
+    }).listen(port, '0.0.0.0', () => {
+        console.log(`\n✅ Quoter Engine: http://0.0.0.0:${port}\n`);
+    });
 }
