@@ -3,7 +3,6 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const satori = require('satori').default;
-const { Resvg } = require('@resvg/resvg-js');
 const parse = require('html-react-parser').default;
 const { createCanvas, registerFont } = require('canvas');
 const sharp = require('sharp');
@@ -20,14 +19,67 @@ const axios = require('axios');
 // every font file so we never pass an incompatible font to Satori.
 const opentype = require('@shuding/opentype.js');
 
-function isSatoriCompatible(buffer) {
+// =============================================================================
+// FONT VALIDATOR
+// We cannot use @shuding/opentype.js directly — it's a private internal build.
+// Instead we check the raw binary bytes for TTF/OTF magic numbers.
+// This is the same check browsers do before parsing a font file.
+// =============================================================================
+
+function isSatoriCompatible(buffer, filename) {
     try {
-        const font = opentype.parse(buffer.buffer || buffer, { lowMemory: true });
-        // Must have outline tables (TrueType or CFF)
-        // Bitmap-only fonts (CBDT/CBLC or EBDT/EBLC without outlines) will throw
-        // or have no glyphs with outlines
-        return !!(font && font.glyphs && font.glyphs.length > 0);
+        if (!buffer || buffer.length < 16) return false;
+
+        // Read the first 4 bytes — this is the "sfVersion" / magic number
+        const tag =
+            (buffer[0] << 24 | buffer[1] << 16 | buffer[2] << 8 | buffer[3]) >>> 0;
+
+        // ── REJECT these formats — Satori/opentype.js cannot handle them ──────
+
+        // TTC (TrueType Collection) — multi-face container
+        // Magic: 0x74746366 = "ttcf"
+        if (tag === 0x74746366) {
+            console.log(`⏭️  Skip (TTC collection): ${filename}`);
+            return false;
+        }
+
+        // WOFF — web font wrapper (not raw sfnt)
+        // Magic: 0x774F4646 = "wOFF"
+        if (tag === 0x774F4646) {
+            console.log(`⏭️  Skip (WOFF): ${filename}`);
+            return false;
+        }
+
+        // WOFF2 — web font wrapper v2
+        // Magic: 0x774F4632 = "wOF2"
+        if (tag === 0x774F4632) {
+            console.log(`⏭️  Skip (WOFF2): ${filename}`);
+            return false;
+        }
+
+        // ── ACCEPT these formats — all are valid sfnt-based fonts ─────────────
+
+        // TrueType: version 0x00010000 (most .ttf files)
+        if (tag === 0x00010000) return true;
+
+        // CFF OpenType: version "OTTO" = 0x4F54544F
+        if (tag === 0x4F54544F) return true;
+
+        // TrueType with "true" tag (some Apple fonts)
+        // Magic: 0x74727565 = "true"
+        if (tag === 0x74727565) return true;
+
+        // TrueType with "typ1" tag (very old PostScript fonts)
+        // Magic: 0x74797031 = "typ1"
+        if (tag === 0x74797031) return true;
+
+        // Unknown format — skip it to be safe
+        const hex = '0x' + tag.toString(16).toUpperCase().padStart(8, '0');
+        console.log(`⏭️  Skip (unknown magic ${hex}): ${filename}`);
+        return false;
+
     } catch (e) {
+        console.log(`⏭️  Skip (read error): ${filename} — ${e.message}`);
         return false;
     }
 }
