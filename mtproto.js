@@ -2,29 +2,23 @@
 // MTProto Premium Emoji Fetcher
 // 
 // Connects DIRECTLY to Telegram's data centers via MTProto protocol.
-// This bypasses the Bot API entirely and works for ANY premium emoji,
-// even ones that Bot API can't fetch.
-//
-// Uses bot token authentication — no user account required.
+// Handles animated (.tgs, .webm) emojis by extracting their static thumbnail,
+// which is what we need for image rendering.
 // =============================================================================
 
-const { TelegramClient } = require('telegram');
-const { StringSession }  = require('telegram/sessions');
-const { Api }            = require('telegram');
-const fs                 = require('fs');
-const path               = require('path');
+const { TelegramClient, Api } = require('telegram');
+const { StringSession }       = require('telegram/sessions');
+const fs                      = require('fs');
+const path                    = require('path');
 
-const API_ID    = parseInt(process.env.TG_API_ID || '0', 10);
-const API_HASH  = process.env.TG_API_HASH || '';
+const API_ID    = parseInt(process.env.API_ID || '0', 10);
+const API_HASH  = process.env.API_HASH || '';
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
-// Session storage — save to disk so we don't re-login on restart
 const SESSION_FILE = path.join(__dirname, '.mtproto_session');
 
 function loadSession() {
-    // 1. Prefer env variable (production/HF deploys)
     if (process.env.TG_SESSION) return process.env.TG_SESSION;
-    // 2. Fall back to disk file (local dev)
     if (fs.existsSync(SESSION_FILE)) {
         try { return fs.readFileSync(SESSION_FILE, 'utf-8').trim(); }
         catch { return ''; }
@@ -36,7 +30,6 @@ function saveSession(sessionStr) {
     try {
         fs.writeFileSync(SESSION_FILE, sessionStr, 'utf-8');
         console.log(`💾 MTProto session saved to ${SESSION_FILE}`);
-        console.log(`   Set TG_SESSION env var to: ${sessionStr.substring(0, 30)}...`);
     } catch (e) {
         console.warn(`⚠️  Could not save MTProto session: ${e.message}`);
     }
@@ -60,12 +53,11 @@ async function getClient() {
         console.log('🔌 Connecting to Telegram MTProto...');
 
         const c = new TelegramClient(stringSession, API_ID, API_HASH, {
-            connectionRetries: 3,
-            useWSS: true,           // websocket (works behind firewalls)
+            connectionRetries: 5,
+            useWSS: true,
             requestRetries: 2,
             timeout: 15,
             autoReconnect: true,
-            // Silence the verbose console output
             baseLogger: {
                 debug: () => {}, info: () => {},
                 warn:  (msg) => console.log(`  [MTProto] ${msg}`),
@@ -73,7 +65,7 @@ async function getClient() {
             },
         });
 
-        // ── Authenticate as BOT (no SMS, no user account needed) ──────────────
+        // Start as bot — no SMS, no user account
         await c.start({
             botAuthToken: BOT_TOKEN,
             onError: (err) => {
@@ -81,7 +73,6 @@ async function getClient() {
             },
         });
 
-        // Save session for next time
         const newSessionStr = c.session.save();
         if (newSessionStr && newSessionStr !== sessionStr) {
             saveSession(newSessionStr);
@@ -97,57 +88,90 @@ async function getClient() {
 }
 
 // =============================================================================
-// FETCH PREMIUM EMOJI FILE — direct from Telegram DC
+// Download ONE emoji document — handles animated/static automatically
+// 
+// Returns: { buffer, mimeType, isStaticThumb } or null
 // =============================================================================
+async function downloadEmojiDocument(c, doc) {
+    if (!doc || doc.className === 'DocumentEmpty' || !doc.id) return null;
 
-async function fetchCustomEmojiDocuments(ids) {
-    const c = await getClient();
-
-    // Convert IDs to BigInt — required by gramjs
-    const documentIds = ids.map(id => {
-        try { return BigInt(String(id).trim()); }
-        catch { return null; }
-    }).filter(Boolean);
-
-    if (documentIds.length === 0) return [];
-
-    // ── API call: messages.getCustomEmojiDocuments ────────────────────────────
-    // This is the EXACT same API call Telegram clients use internally
-    // Returns Document objects we can download directly
-    const result = await c.invoke(
-        new Api.messages.GetCustomEmojiDocuments({
-            documentId: documentIds,
-        })
-    );
-
-    // result is an array of Document objects (or null entries for missing IDs)
-    return result || [];
-}
-
-// Download a Document's binary data and return as Buffer
-async function downloadDocument(c, document) {
-    if (!document) return null;
     try {
-        const buf = await c.downloadMedia(document, {
-            // Get the best-quality static representation
-            // (premium emojis are usually animated, we want the static thumb)
-            thumb: 0,
-        });
-        return buf;
-    } catch (e) {
-        // Try without thumb (for static emojis)
-        try {
-            return await c.downloadMedia(document);
-        } catch {
+        let mediaToDownload = doc;          // Default: the main file
+        let isStaticThumb   = false;
+        let resolvedMime    = doc.mimeType;
+
+        // ── Detect animated emoji (TGS = Lottie, WEBM = video) ────────────────
+        // For rendering as image, we need the STATIC thumbnail, not the animation
+        const isAnimated =
+            doc.mimeType === 'application/x-tgsticker' ||
+            doc.mimeType === 'video/webm' ||
+            doc.mimeType === 'application/x-tgwallpattern';
+
+        if (isAnimated) {
+            // Find a static (non-video) thumbnail
+            if (doc.thumbs && doc.thumbs.length > 0) {
+                // Look for PhotoSize / PhotoCachedSize (static images)
+                // Avoid VideoSize since we want a still frame
+                const staticThumb = doc.thumbs.find(thumb =>
+                    thumb instanceof Api.PhotoSize ||
+                    thumb instanceof Api.PhotoCachedSize ||
+                    thumb.className === 'PhotoSize' ||
+                    thumb.className === 'PhotoCachedSize' ||
+                    thumb.className === 'PhotoSizeProgressive'
+                );
+
+                if (staticThumb) {
+                    // Build InputDocumentFileLocation for thumbnail-only download
+                    mediaToDownload = new Api.InputDocumentFileLocation({
+                        id:            doc.id,
+                        accessHash:    doc.accessHash,
+                        fileReference: doc.fileReference,
+                        thumbSize:     staticThumb.type, // 's', 'm', 'v', etc.
+                    });
+                    isStaticThumb = true;
+                    resolvedMime  = 'image/jpeg'; // thumbnails are JPEG
+                } else {
+                    // No static thumb available — try video thumb as last resort
+                    const anyThumb = doc.thumbs.find(t =>
+                        t.className === 'VideoSize' || t.type
+                    );
+                    if (anyThumb && anyThumb.type) {
+                        mediaToDownload = new Api.InputDocumentFileLocation({
+                            id:            doc.id,
+                            accessHash:    doc.accessHash,
+                            fileReference: doc.fileReference,
+                            thumbSize:     anyThumb.type,
+                        });
+                        isStaticThumb = true;
+                    }
+                }
+            }
+        }
+
+        // Download whatever we resolved to (full doc OR thumbnail)
+        const buffer = await c.downloadMedia(mediaToDownload, { workers: 1 });
+
+        if (!buffer || buffer.length < 50) {
             return null;
         }
+
+        return {
+            buffer,
+            mimeType: resolvedMime,
+            isStaticThumb,
+            originalMime: doc.mimeType,
+        };
+
+    } catch (e) {
+        console.warn(`   [MTProto] download error for doc ${doc.id}: ${e.message}`);
+        return null;
     }
 }
 
 // =============================================================================
-// MAIN EXPORT: batch fetch many emoji IDs, return Map<id, Buffer>
+// MAIN BATCH FETCHER
+// Returns Map<originalIdString, Buffer>
 // =============================================================================
-
 async function fetchPremiumEmojis(ids) {
     const result = new Map();
     if (!Array.isArray(ids) || ids.length === 0) return result;
@@ -155,39 +179,81 @@ async function fetchPremiumEmojis(ids) {
     try {
         const c = await getClient();
 
-        // Telegram supports up to 200 IDs per call
-        const BATCH_SIZE = 200;
-        for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-            const batch = ids.slice(i, i + BATCH_SIZE);
-            const docs  = await fetchCustomEmojiDocuments(batch);
+        // ── Prepare ID list — gramjs accepts string IDs in the array ──────────
+        // (no BigInt conversion needed — gramjs handles it internally)
+        const documentIds = ids
+            .map(id => String(id).trim())
+            .filter(id => id && id !== 'null' && id !== 'undefined');
 
-            // Download all documents in parallel
-            await Promise.all(docs.map(async (doc, idx) => {
-                if (!doc) return;
-                const idStr = String(doc.id);
-                try {
-                    const buf = await downloadDocument(c, doc);
-                    if (buf && buf.length > 100) {
-                        result.set(idStr, buf);
-                    }
-                } catch (e) {
-                    console.warn(`⚠️  MTProto download failed for ${idStr}: ${e.message}`);
-                }
-            }));
+        if (documentIds.length === 0) return result;
+
+        console.log(`   [MTProto] Requesting ${documentIds.length} document(s)...`);
+
+        // ── Invoke the API ────────────────────────────────────────────────────
+        let documents;
+        try {
+            documents = await c.invoke(
+                new Api.messages.GetCustomEmojiDocuments({
+                    documentId: documentIds,
+                })
+            );
+        } catch (e) {
+            console.error(`   [MTProto] API call failed: ${e.message}`);
+            return result;
         }
+
+        if (!documents || !Array.isArray(documents) || documents.length === 0) {
+            console.warn(`   [MTProto] No emoji documents returned`);
+            return result;
+        }
+
+        console.log(`   [MTProto] Got ${documents.length} document(s) in response`);
+
+        // ── Process each document in parallel ─────────────────────────────────
+        await Promise.all(documents.map(async (doc, idx) => {
+            if (!doc) {
+                console.warn(`   [MTProto] [${idx}] null document`);
+                return;
+            }
+
+            if (doc.className === 'DocumentEmpty') {
+                console.warn(`   [MTProto] [${idx}] DocumentEmpty for id ${doc.id}`);
+                return;
+            }
+
+            // Match document back to original request ID
+            // Use position-based matching as fallback if IDs don't match
+            const docIdStr = doc.id ? doc.id.toString() : '';
+            const originalId = documentIds.includes(docIdStr)
+                ? docIdStr
+                : (documentIds[idx] || docIdStr);
+
+            const downloaded = await downloadEmojiDocument(c, doc);
+            if (downloaded && downloaded.buffer) {
+                result.set(originalId, downloaded.buffer);
+                console.log(
+                    `   [MTProto] ✅ ${originalId} ` +
+                    `(${downloaded.buffer.length} bytes, ` +
+                    `orig=${downloaded.originalMime}, ` +
+                    `${downloaded.isStaticThumb ? 'thumb' : 'full'})`
+                );
+            } else {
+                console.warn(`   [MTProto] ⚠️  Could not download ${originalId}`);
+            }
+        }));
+
     } catch (e) {
-        console.error(`❌ MTProto fetch failed: ${e.message}`);
+        console.error(`❌ MTProto batch fetch failed: ${e.message}`);
+        console.error(e.stack);
     }
 
     return result;
 }
 
-// Check if MTProto is available (credentials configured)
 function isAvailable() {
     return !!(API_ID && API_HASH && BOT_TOKEN);
 }
 
-// Graceful shutdown
 async function disconnect() {
     if (client && client.connected) {
         try { await client.disconnect(); }
