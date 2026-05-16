@@ -359,16 +359,36 @@ const ECACHE = new Map();
 const ECACHE_FAILED = new Set();
 
 // Convert raw image Buffer to a small PNG data URI
+// Convert raw image Buffer to a small PNG data URI
+// Handles: JPEG (static thumbs), WEBP, PNG, animated WebP frames
 async function bufferToDataUri(buf) {
+    if (!buf || buf.length < 50) return null;
+
     try {
-        const png = await sharp(buf, { animated: false })
+        // sharp handles JPEG, PNG, WebP (incl. animated → first frame)
+        // For animated WebP we use { animated: false } to get just first frame
+        const png = await sharp(buf, { animated: false, pages: 1 })
             .resize(128, 128, { fit: 'inside' })
             .png()
             .toBuffer();
         return `data:image/png;base64,${png.toString('base64')}`;
     } catch (e) {
-        console.warn(`⚠️  sharp conversion failed: ${e.message}`);
-        return null;
+        // If sharp can't handle it (e.g. .tgs Lottie or unknown format)
+        // try without options
+        try {
+            const png = await sharp(buf)
+                .resize(128, 128, { fit: 'inside' })
+                .png()
+                .toBuffer();
+            return `data:image/png;base64,${png.toString('base64')}`;
+        } catch (e2) {
+            console.warn(`⚠️  sharp can't convert buffer (size=${buf.length}): ${e2.message}`);
+            // Last resort: detect if it's TGS (Lottie) — we can't render those without lottie lib
+            if (buf.slice(0, 2).toString('hex') === '1f8b') {
+                console.warn(`   It's a gzipped TGS file — needs Lottie library to render`);
+            }
+            return null;
+        }
     }
 }
 
