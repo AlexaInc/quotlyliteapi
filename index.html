@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Premium Quoter Engine 🚀</title>
-    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -62,7 +61,10 @@
             font-family: inherit;
             transition: all 0.2s;
         }
-        input:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2); }
+        input:focus, select:focus, textarea:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2); }
+
+        select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 16px center; padding-right: 40px; }
+        select option { background: #1e293b; color: #fff; }
 
         .preview-section {
             display: flex;
@@ -95,6 +97,7 @@
         }
         button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(99, 102, 241, 0.4); }
         button:active { transform: translateY(0); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 
         .loading {
             position: absolute;
@@ -114,6 +117,72 @@
         }
 
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* ── Password modal ──────────────────────────────────────────────── */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.active { display: flex; }
+
+        .modal {
+            background: linear-gradient(135deg, #1e293b, #0f172a);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 32px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            animation: slideIn 0.3s ease;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .modal h2 {
+            font-size: 1.5rem;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .modal p {
+            color: #94a3b8;
+            margin-bottom: 20px;
+            font-size: 0.95rem;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .modal button {
+            flex: 1;
+            margin: 0;
+            font-size: 1rem;
+            padding: 12px;
+        }
+        .btn-cancel {
+            background: rgba(255,255,255,0.1) !important;
+            color: #cbd5e1 !important;
+        }
+        .btn-cancel:hover {
+            background: rgba(255,255,255,0.15) !important;
+            box-shadow: none !important;
+        }
+        .error-msg {
+            color: #ef4444;
+            font-size: 0.85rem;
+            margin-top: 8px;
+            min-height: 1.2em;
+        }
     </style>
 </head>
 <body>
@@ -141,6 +210,20 @@
                 <input type="number" id="nameColorId" min="0" max="9" value="2">
             </div>
             <div class="input-group">
+                <label>Emoji Provider 😊</label>
+                <select id="emojiProvider">
+                    <option value="apple" selected>🍎 Apple (iPhone) — Default</option>
+                    <option value="google">🤖 Google (Android / Noto)</option>
+                    <option value="twitter">🐦 Twitter (Twemoji)</option>
+                    <option value="facebook">📘 Facebook</option>
+                    <option value="microsoft">🪟 Microsoft (Windows)</option>
+                    <option value="samsung">📱 Samsung</option>
+                    <option value="whatsapp">💬 WhatsApp</option>
+                    <option value="openmoji">🎨 OpenMoji</option>
+                    <option value="emojione">✨ EmojiOne / JoyPixels</option>
+                </select>
+            </div>
+            <div class="input-group">
                 <label>Reply From (Optional)</label>
                 <input type="text" id="replySender" placeholder="User Name">
             </div>
@@ -149,7 +232,7 @@
                 <input type="text" id="replyMessage" placeholder="Previous message...">
             </div>
             <button id="generateBtn">Generate Sticker 🚀</button>
-            <button id="updateBtn" style="background: linear-gradient(135deg, #ef4444, #f97316); margin-top: 5px; font-size: 0.9rem; padding: 10px;">Update Source (Git Pull) 🔄</button>
+            <button id="updateBtn" style="background: linear-gradient(135deg, #ef4444, #f97316); margin-top: 5px; font-size: 0.9rem; padding: 10px;">🔒 Update Source (Git Pull)</button>
         </div>
 
         <div class="preview-section">
@@ -166,24 +249,43 @@
         </div>
     </div>
 
+    <!-- Password Modal -->
+    <div class="modal-overlay" id="passwordModal">
+        <div class="modal">
+            <h2>🔐 Admin Password Required</h2>
+            <p>This action will pull the latest code from git and restart the engine. Please enter the admin password to continue.</p>
+            <div class="input-group">
+                <label>Password</label>
+                <input type="password" id="passwordInput" placeholder="Enter password..." autocomplete="off">
+                <div class="error-msg" id="passwordError"></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-cancel" id="cancelPasswordBtn">Cancel</button>
+                <button id="confirmPasswordBtn">Confirm Update 🚀</button>
+            </div>
+        </div>
+    </div>
+
     <script>
+        // ── Generate sticker ──────────────────────────────────────────────────
         document.getElementById('generateBtn').addEventListener('click', async () => {
             const data = {
-                firstName: document.getElementById('firstName').value,
-                lastName: document.getElementById('lastName').value,
-                message: document.getElementById('message').value,
-                nameColorId: parseInt(document.getElementById('nameColorId').value),
-                replySender: document.getElementById('replySender').value,
-                replyMessage: document.getElementById('replyMessage').value,
+                firstName:     document.getElementById('firstName').value,
+                lastName:      document.getElementById('lastName').value,
+                message:       document.getElementById('message').value,
+                nameColorId:   parseInt(document.getElementById('nameColorId').value),
+                emojiProvider: document.getElementById('emojiProvider').value,
+                replySender:   document.getElementById('replySender').value,
+                replyMessage:  document.getElementById('replyMessage').value,
             };
 
             const placeholder = document.getElementById('placeholder');
-            const previewImg = document.getElementById('previewImg');
-            const loading = document.getElementById('loading');
+            const previewImg  = document.getElementById('previewImg');
+            const loading     = document.getElementById('loading');
 
             placeholder.style.display = 'none';
-            previewImg.style.display = 'none';
-            loading.style.display = 'block';
+            previewImg.style.display  = 'none';
+            loading.style.display     = 'block';
 
             try {
                 const response = await fetch('/api/generate', {
@@ -195,40 +297,119 @@
                 if (!response.ok) throw new Error('Generation failed');
 
                 const blob = await response.blob();
-                const url = URL.createObjectURL(blob);
+                const url  = URL.createObjectURL(blob);
                 
-                previewImg.src = url;
+                previewImg.src           = url;
                 previewImg.style.display = 'block';
-                loading.style.display = 'none';
+                loading.style.display    = 'none';
             } catch (err) {
                 alert('Error generating sticker: ' + err.message);
                 placeholder.style.display = 'flex';
-                loading.style.display = 'none';
+                loading.style.display     = 'none';
             }
         });
 
-        document.getElementById('updateBtn').addEventListener('click', async () => {
-            if (!confirm('Are you sure you want to pull latest code and restart the engine?')) return;
-            
-            const btn = document.getElementById('updateBtn');
-            btn.textContent = 'Updating... ⏳';
-            btn.disabled = true;
+        // ── Password modal handling ───────────────────────────────────────────
+        const passwordModal     = document.getElementById('passwordModal');
+        const passwordInput     = document.getElementById('passwordInput');
+        const passwordError     = document.getElementById('passwordError');
+        const confirmPasswordBtn = document.getElementById('confirmPasswordBtn');
+        const cancelPasswordBtn  = document.getElementById('cancelPasswordBtn');
+
+        function openPasswordModal() {
+            passwordError.textContent = '';
+            passwordInput.value       = '';
+            passwordModal.classList.add('active');
+            setTimeout(() => passwordInput.focus(), 100);
+        }
+
+        function closePasswordModal() {
+            passwordModal.classList.remove('active');
+            passwordInput.value = '';
+            passwordError.textContent = '';
+        }
+
+        // ── Show modal when update is clicked ─────────────────────────────────
+        document.getElementById('updateBtn').addEventListener('click', () => {
+            openPasswordModal();
+        });
+
+        // ── Cancel button closes modal ────────────────────────────────────────
+        cancelPasswordBtn.addEventListener('click', closePasswordModal);
+
+        // ── Click outside modal closes it ─────────────────────────────────────
+        passwordModal.addEventListener('click', (e) => {
+            if (e.target === passwordModal) closePasswordModal();
+        });
+
+        // ── ESC key closes modal ──────────────────────────────────────────────
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && passwordModal.classList.contains('active')) {
+                closePasswordModal();
+            }
+        });
+
+        // ── Enter key in password field submits ───────────────────────────────
+        passwordInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                confirmPasswordBtn.click();
+            }
+        });
+
+        // ── Confirm password and trigger update ───────────────────────────────
+        confirmPasswordBtn.addEventListener('click', async () => {
+            const password = passwordInput.value.trim();
+            if (!password) {
+                passwordError.textContent = '⚠️ Please enter a password';
+                return;
+            }
+
+            confirmPasswordBtn.disabled = true;
+            cancelPasswordBtn.disabled  = true;
+            confirmPasswordBtn.textContent = 'Updating... ⏳';
+            passwordError.textContent = '';
 
             try {
-                const response = await fetch('/api/update', { method: 'POST' });
+                const response = await fetch('/api/update', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Update-Password': password
+                    },
+                    body: JSON.stringify({ password })
+                });
+
                 const result = await response.json();
-                
+
                 if (response.ok) {
-                    alert('Update Success: ' + result.message + '\n' + result.output);
-                    // Reload after a delay for the server to restart
-                    setTimeout(() => window.location.reload(), 5000);
+                    passwordError.style.color = '#10b981';
+                    passwordError.textContent = '✅ ' + (result.message || 'Update successful');
+                    setTimeout(() => {
+                        alert('Update Success!\n' + (result.output || ''));
+                        closePasswordModal();
+                        // Reload after delay so server can restart
+                        setTimeout(() => window.location.reload(), 5000);
+                    }, 800);
+                } else if (response.status === 401) {
+                    passwordError.style.color = '#ef4444';
+                    passwordError.textContent = '🚫 Password required';
+                } else if (response.status === 403) {
+                    passwordError.style.color = '#ef4444';
+                    passwordError.textContent = '🚫 Invalid password';
+                } else if (response.status === 503) {
+                    passwordError.style.color = '#ef4444';
+                    passwordError.textContent = '⚠️ Update endpoint is disabled on server';
                 } else {
-                    throw new Error(result.error || 'Update failed');
+                    throw new Error(result.error || result.details || 'Update failed');
                 }
             } catch (err) {
-                alert('Update Error: ' + err.message);
-                btn.textContent = 'Update Source (Git Pull) 🔄';
-                btn.disabled = false;
+                passwordError.style.color = '#ef4444';
+                passwordError.textContent = '❌ ' + err.message;
+            } finally {
+                confirmPasswordBtn.disabled = false;
+                cancelPasswordBtn.disabled  = false;
+                confirmPasswordBtn.textContent = 'Confirm Update 🚀';
             }
         });
     </script>
