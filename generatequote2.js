@@ -361,7 +361,7 @@ async function getPremiumEmojiB64(id) {
         const stickersUrl = `${TG_API_ROOT}/bot${BOT_TOKEN}/getCustomEmojiStickers`;
         const { data: d1 } = await axios.post(
             stickersUrl, 
-            { custom_emoji_ids: [id] }, 
+            { custom_emoji_ids: [`\"${id}\"`] }, 
             { headers }
         );
         
