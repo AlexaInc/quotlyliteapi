@@ -15,20 +15,21 @@ if (!BOT_TOKEN) {
     process.exit(1);
 }
 
-// Custom Telegram API root — supports self-hosted Bot API or HF Space proxies
 const TG_API_ROOT  = (process.env.TG_API_ROOT  || 'https://api.telegram.org').replace(/\/$/, '');
 const TG_FILE_ROOT = (process.env.TG_FILE_ROOT || `${TG_API_ROOT}/file`).replace(/\/$/, '');
 const HF_TOKEN     = process.env.HFTOKEN || process.env.HF_TOKEN || '';
 
 console.log(`📡 Telegram API root : ${TG_API_ROOT}`);
 console.log(`📁 Telegram file root: ${TG_FILE_ROOT}`);
-if (HF_TOKEN) console.log(`🤗 HF token detected — will inject auth on .hf.space requests`);
+if (HF_TOKEN) console.log(`🤗 HF token detected — auth header sent on ALL requests`);
 
-// Helper: build axios options with conditional HF auth header
+// =============================================================================
+// HTTP REQUEST HELPER (always sends HF auth when token exists)
+// =============================================================================
 function buildTgRequestOptions(url, extra = {}) {
-    const options = { timeout: 8000, ...extra };
+    const options = { timeout: 10000, ...extra };
     options.headers = { ...(options.headers || {}) };
-    if (HF_TOKEN && /\.hf\.space/i.test(url)) {
+    if (HF_TOKEN) {
         options.headers['Authorization'] = `Bearer ${HF_TOKEN}`;
         options.headers['Referer']       = 'https://huggingface.co';
     }
@@ -36,15 +37,10 @@ function buildTgRequestOptions(url, extra = {}) {
 }
 
 // =============================================================================
-// FONT INVENTORY (informational — Chromium loads all via fontconfig)
+// FONT INVENTORY
 // =============================================================================
 ;(function inventoryFonts() {
-    const SCAN_DIRS = [
-        '/usr/share/fonts',
-        '/usr/local/share/fonts',
-        '/root/.fonts',
-    ];
-
+    const SCAN_DIRS = ['/usr/share/fonts', '/usr/local/share/fonts', '/root/.fonts'];
     const counts = { ttf: 0, otf: 0, ttc: 0, woff: 0, woff2: 0, other: 0, total: 0 };
 
     function walk(dir) {
@@ -69,9 +65,7 @@ function buildTgRequestOptions(url, extra = {}) {
 
     const t0 = Date.now();
     SCAN_DIRS.forEach(walk);
-    const elapsed = Date.now() - t0;
-
-    console.log(`\n📦 Font inventory (${elapsed}ms):`);
+    console.log(`\n📦 Font inventory (${Date.now() - t0}ms):`);
     console.log(`   .ttf  : ${counts.ttf}`);
     console.log(`   .otf  : ${counts.otf}`);
     console.log(`   .ttc  : ${counts.ttc}  (collections — each contains 2-4 fonts)`);
@@ -82,7 +76,7 @@ function buildTgRequestOptions(url, extra = {}) {
 })();
 
 // =============================================================================
-// SHARED BROWSER (single instance, reused across all requests)
+// SHARED BROWSER
 // =============================================================================
 let sharedBrowser = null;
 let browserLock   = false;
@@ -225,73 +219,33 @@ function escapeHtml(t) {
 // =============================================================================
 const IS_EMOJI = /(\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\p{Emoji_Modifier_Base})/u;
 
-// Emoji provider URL builders — each returns a list of candidate URLs
 const EMOJI_PROVIDERS = {
-    apple: (cps) => {
-        const variants = buildCodepointVariants(cps);
-        return variants.map(cp =>
-            `https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/${cp}.png`
-        );
-    },
-    google: (cps) => {
-        const variants = buildCodepointVariants(cps);
-        return variants.map(cp =>
-            `https://cdn.jsdelivr.net/npm/emoji-datasource-google/img/google/64/${cp}.png`
-        );
-    },
-    twitter: (cps) => {
-        const variants = buildCodepointVariants(cps);
-        return variants.map(cp =>
-            `https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/${cp}.png`
-        );
-    },
-    facebook: (cps) => {
-        const variants = buildCodepointVariants(cps);
-        return variants.map(cp =>
-            `https://cdn.jsdelivr.net/npm/emoji-datasource-facebook/img/facebook/64/${cp}.png`
-        );
-    },
-    microsoft: (cps) => {
-        const variants = buildCodepointVariants(cps);
-        return variants.map(cp =>
-            `https://cdn.jsdelivr.net/npm/emoji-datasource-microsoft/img/microsoft/64/${cp}.png`
-        );
-    },
-    samsung: (cps) => {
-        const variants = buildCodepointVariants(cps);
-        return variants.map(cp =>
-            `https://cdn.jsdelivr.net/npm/emoji-datasource-samsung/img/samsung/64/${cp}.png`
-        );
-    },
-    whatsapp: (cps) => {
-        const variants = buildCodepointVariants(cps);
-        return variants.map(cp =>
-            `https://cdn.jsdelivr.net/npm/emoji-datasource-whatsapp/img/whatsapp/64/${cp}.png`
-        );
-    },
-    openmoji: (cps) => {
-        const variants = buildCodepointVariants(cps);
-        // OpenMoji uses UPPERCASE codepoints
-        return variants.map(cp =>
-            `https://cdn.jsdelivr.net/npm/openmoji@latest/color/72x72/${cp.toUpperCase()}.png`
-        );
-    },
-    emojione: (cps) => {
-        const variants = buildCodepointVariants(cps);
-        return variants.map(cp =>
-            `https://cdn.jsdelivr.net/npm/emoji-datasource-joypixels/img/joypixels/64/${cp}.png`
-        );
-    },
+    apple: (cps) => buildCodepointVariants(cps).map(cp =>
+        `https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/${cp}.png`),
+    google: (cps) => buildCodepointVariants(cps).map(cp =>
+        `https://cdn.jsdelivr.net/npm/emoji-datasource-google/img/google/64/${cp}.png`),
+    twitter: (cps) => buildCodepointVariants(cps).map(cp =>
+        `https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/${cp}.png`),
+    facebook: (cps) => buildCodepointVariants(cps).map(cp =>
+        `https://cdn.jsdelivr.net/npm/emoji-datasource-facebook/img/facebook/64/${cp}.png`),
+    microsoft: (cps) => buildCodepointVariants(cps).map(cp =>
+        `https://cdn.jsdelivr.net/npm/emoji-datasource-microsoft/img/microsoft/64/${cp}.png`),
+    samsung: (cps) => buildCodepointVariants(cps).map(cp =>
+        `https://cdn.jsdelivr.net/npm/emoji-datasource-samsung/img/samsung/64/${cp}.png`),
+    whatsapp: (cps) => buildCodepointVariants(cps).map(cp =>
+        `https://cdn.jsdelivr.net/npm/emoji-datasource-whatsapp/img/whatsapp/64/${cp}.png`),
+    openmoji: (cps) => buildCodepointVariants(cps).map(cp =>
+        `https://cdn.jsdelivr.net/npm/openmoji@latest/color/72x72/${cp.toUpperCase()}.png`),
+    emojione: (cps) => buildCodepointVariants(cps).map(cp =>
+        `https://cdn.jsdelivr.net/npm/emoji-datasource-joypixels/img/joypixels/64/${cp}.png`),
 };
 
 function emojiToCodepoints(emoji) {
     const r = []; let c = 0, p = 0;
     for (let i = 0; i < emoji.length; i++) {
         c = emoji.charCodeAt(i);
-        if (p) {
-            r.push((0x10000 + ((p - 0xD800) << 10) + (c - 0xDC00)).toString(16));
-            p = 0;
-        } else if (0xD800 <= c && c <= 0xDBFF) p = c;
+        if (p) { r.push((0x10000 + ((p - 0xD800) << 10) + (c - 0xDC00)).toString(16)); p = 0; }
+        else if (0xD800 <= c && c <= 0xDBFF) p = c;
         else r.push(c.toString(16));
     }
     return r;
@@ -303,13 +257,9 @@ function buildCodepointVariants(cps) {
     const noZwjFe0f   = joined.includes('200d') ? joined : noFe0f;
     const baseOnly    = cps[0];
     const noFe0fNoVar = cps.filter(c => c !== 'fe0f' && c !== '200d').join('-');
-
-    return [...new Set([
-        noZwjFe0f, joined, noFe0f, noFe0fNoVar, baseOnly,
-    ])].filter(Boolean);
+    return [...new Set([noZwjFe0f, joined, noFe0f, noFe0fNoVar, baseOnly])].filter(Boolean);
 }
 
-// Build URL list for selected provider, then add cross-provider fallbacks
 function buildEmojiUrls(emoji, provider = 'apple') {
     const cps = emojiToCodepoints(emoji);
     if (cps.length === 0) return [];
@@ -317,10 +267,8 @@ function buildEmojiUrls(emoji, provider = 'apple') {
     const primaryProvider = EMOJI_PROVIDERS[provider] ? provider : 'apple';
     const urls = [];
 
-    // 1. User's chosen provider first
     urls.push(...EMOJI_PROVIDERS[primaryProvider](cps));
 
-    // 2. Cross-provider fallback chain
     const fallbackOrder = ['apple', 'google', 'twitter', 'facebook'];
     for (const fp of fallbackOrder) {
         if (fp === primaryProvider) continue;
@@ -342,63 +290,106 @@ function emojiImgTag(emoji, cssClass = 'emoji', provider = 'apple') {
 }
 
 // =============================================================================
-// PREMIUM EMOJI CACHE (Telegram custom emojis)
+// PREMIUM EMOJI WITH FALLBACK
+// If premium emoji fetch fails (network/API/etc), we fall back to the regular
+// emoji using the selected provider — so the user never sees a missing emoji.
 // =============================================================================
-const ECACHE = new Map();
+const ECACHE = new Map();         // cache successful base64 data URIs
+const ECACHE_FAILED = new Set();  // cache failed IDs so we don't retry every time
 
-async function getPremiumEmojiB64(id1) {
-    if (ECACHE.has(id1)) return ECACHE.get(id1);
-    const id = id1.toString();
+async function getPremiumEmojiB64(id) {
+    const idStr = String(id).trim();
+    if (!idStr || idStr === 'null' || idStr === 'undefined') return null;
+
+    // Return cached success
+    if (ECACHE.has(idStr)) return ECACHE.get(idStr);
+
+    // Skip retrying known-failed IDs (within this process lifetime)
+    if (ECACHE_FAILED.has(idStr)) return null;
+
     try {
-        // Base headers configuration used across requests
-        const headers = {};
-        if (HF_TOKEN) {
-            headers['Authorization'] = `Bearer ${HF_TOKEN}`;
-            headers['Referer'] = 'https://huggingface.co';
+        const stickersUrl = `${TG_API_ROOT}/bot${BOT_TOKEN}/getCustomEmojiStickers`;
+        const payload = { custom_emoji_ids: [idStr] };  // MUST be array of strings
+
+        const { data: d1 } = await axios.post(
+            stickersUrl, payload, buildTgRequestOptions(stickersUrl)
+        );
+        const st = d1.result?.[0];
+        if (!st) {
+            console.warn(`⚠️  No sticker returned for custom_emoji_id: ${idStr}`);
+            ECACHE_FAILED.add(idStr);
+            return null;
         }
 
-        // 1. Fetch Custom Emoji Stickers Info
-        const stickersUrl = `${TG_API_ROOT}/bot${BOT_TOKEN}/getCustomEmojiStickers`;
-        const { data: d1 } = await axios.post(
-            stickersUrl, 
-            { custom_emoji_ids: [id] }, 
-            { headers }
-        );
-        
-        const st = d1.result?.[0];
-        if (!st) return null;
-
-        // 2. Get File Path
         const getFileUrl = `${TG_API_ROOT}/bot${BOT_TOKEN}/getFile`;
         const { data: d2 } = await axios.post(
-            getFileUrl, 
-            { file_id: st.thumbnail?.file_id || st.file_id }, 
-            { headers }
+            getFileUrl, { file_id: st.thumbnail?.file_id || st.file_id },
+            buildTgRequestOptions(getFileUrl)
         );
 
-        // 3. Download the Actual File
         const fileUrl = `${TG_FILE_ROOT}/bot${BOT_TOKEN}/${d2.result.file_path}`;
         const { data: raw } = await axios.get(
-            fileUrl, 
-            { 
-                headers,
-                responseType: 'arraybuffer' 
-            }
+            fileUrl, buildTgRequestOptions(fileUrl, { responseType: 'arraybuffer' })
         );
 
-        // 4. Process Image with Sharp
         const b64 = `data:image/png;base64,${(await sharp(raw).resize(128, 128).png().toBuffer()).toString('base64')}`;
-        ECACHE.set(id, b64);
+        ECACHE.set(idStr, b64);
         return b64;
-
     } catch (e) {
-        console.error(`❌ Premium emoji fetch failed: ${id} — ${e.message}`);
+        console.error(`❌ Premium emoji fetch failed: ${idStr} — ${e.message}`);
+        if (e.response?.data) console.error(`   API response:`, JSON.stringify(e.response.data));
+        if (e.response?.status) console.error(`   HTTP status: ${e.response.status}`);
+        ECACHE_FAILED.add(idStr);
         return null;
     }
 }
 
 // =============================================================================
-// NAME RENDERING (pure HTML — Puppeteer handles all Unicode natively)
+// PREMIUM EMOJI WRAPPER — with automatic fallback to regular emoji
+// 
+// fallbackEmoji = the actual unicode character (or string) that the premium
+// emoji REPLACES in the original text. If the premium fetch fails, we render
+// the fallbackEmoji using the selected emoji provider.
+//
+// Telegram entities for custom_emoji always have a fallback unicode char in
+// the message text — that's what we extract and pass in.
+// =============================================================================
+async function renderPremiumEmojiOrFallback(customEmojiId, fallbackText, provider = 'apple', cssClass = 'msg-emoji') {
+    const b64 = await getPremiumEmojiB64(customEmojiId);
+
+    if (b64) {
+        // Success — return the premium emoji image tag
+        // ALSO add onerror in case the data URI somehow fails to render
+        const fallbackUrls = fallbackText && IS_EMOJI.test(fallbackText)
+            ? buildEmojiUrls(fallbackText, provider)
+            : [];
+
+        if (fallbackUrls.length > 0) {
+            // Chain: premium → fallback emoji URLs → hide
+            let onerror = `this.style.display='none';this.onerror=null;`;
+            for (let i = fallbackUrls.length - 1; i >= 0; i--) {
+                onerror = `this.onerror=function(){${onerror}};this.src='${fallbackUrls[i]}';`;
+            }
+            return `<img src="${b64}" class="${cssClass}" onerror="${onerror}"/>`;
+        }
+        return `<img src="${b64}" class="${cssClass}"/>`;
+    }
+
+    // Premium fetch failed — fall back to regular emoji using selected provider
+    if (fallbackText) {
+        if (IS_EMOJI.test(fallbackText)) {
+            return emojiImgTag(fallbackText, cssClass, provider);
+        }
+        // Fallback text isn't an emoji — render it as plain text
+        return escapeHtml(fallbackText);
+    }
+
+    // No fallback available — return empty
+    return '';
+}
+
+// =============================================================================
+// NAME RENDERING
 // =============================================================================
 function nameToHtml(text, provider = 'apple') {
     if (!text) return '';
@@ -465,8 +456,16 @@ async function msgToHtml(text, entities = [], provider = 'apple') {
             else if (['url','text_url','mention','bot_command'].includes(e.type))
                 html += '<span class="link">';
             else if (e.type === 'custom_emoji') {
-                const b64 = await getPremiumEmojiB64(e.custom_emoji_id);
-                if (b64) html += `<img src="${b64}" class="msg-emoji"/>`;
+                // ── Extract the unicode emoji that this custom emoji is replacing ──
+                // Telegram entities always have a fallback unicode char in the text
+                // at offset...offset+length. We grab it and pass as fallback.
+                const fallbackText = text.substring(e.offset, e.offset + e.length);
+                const emojiId      = String(e.custom_emoji_id);
+
+                html += await renderPremiumEmojiOrFallback(
+                    emojiId, fallbackText, provider, 'msg-emoji'
+                );
+
                 cursor = e.offset + e.length;
                 while (i + 1 < tags.length && tags[i + 1].info === e) i++;
             }
@@ -488,7 +487,7 @@ async function msgToHtml(text, entities = [], provider = 'apple') {
 }
 
 // =============================================================================
-// AVATAR GENERATOR (SVG → base64, no canvas needed)
+// AVATAR GENERATOR (SVG, no canvas needed)
 // =============================================================================
 function dummyAvatarB64(f, l, color) {
     const initials = ((f?.[0] || '') + (l?.[0] || '')).toUpperCase().substring(0, 2) || '?';
@@ -523,7 +522,6 @@ async function createImage(
     const MSG_FS  = 16 * SCALE;
 
     const rows = await Promise.all(msgList.map(async (d) => {
-        // Per-message emoji provider — default to 'apple' if not set
         const provider = d.emojiProvider || 'apple';
 
         const name     = `${d.firstName || ''} ${d.lastName || ''}`.trim() || 'User';
@@ -548,12 +546,24 @@ async function createImage(
         const rColor    = getTelegramColor(d.replysendercolor || 0);
         const rName     = d.replySender ? nameToHtml(d.replySender, provider) : '';
         const fName     = d.forwardName ? nameToHtml(d.forwardName, provider) : '';
-        const statusB64 = d.customemojiid ? await getPremiumEmojiB64(d.customemojiid) : null;
-        const msgHtml   = await msgToHtml(d.message || '', d.entities || [], provider);
+
+        // ── Status emoji (the small "premium emoji" next to user name) ────────
+        // Provide a fallback star emoji "⭐" since we don't know which emoji
+        // the user has set as their status. The client can override this by
+        // passing `customEmojiFallback` in the message data.
+        let statusEmojiHtml = '';
+        if (d.customemojiid) {
+            const fallbackChar = d.customEmojiFallback || '⭐';
+            statusEmojiHtml = await renderPremiumEmojiOrFallback(
+                String(d.customemojiid), fallbackChar, provider, 'premium-emoji'
+            );
+        }
+
+        const msgHtml = await msgToHtml(d.message || '', d.entities || [], provider);
 
         return {
             name, color, nameHtml, avatarB64, mediaB64, isSticker,
-            rColor, rName, rMsg: d.replyMessage, statusB64, msgHtml,
+            rColor, rName, rMsg: d.replyMessage, statusEmojiHtml, msgHtml,
             userId: d.id || name, fName, isAbsoluteLast: d.isAbsoluteLast
         };
     }));
@@ -595,7 +605,7 @@ body { font-family: ${CSS_FONT}; background: transparent; -webkit-font-smoothing
 .bubble-name { font-size: ${NAME_FS}px; font-weight: 600; margin-bottom: ${4 * SCALE}px; display: flex; align-items: center; white-space: nowrap; }
 .bubble-name .name-text { display: inline-block; }
 .f-line { font-size: ${MSG_FS * 0.75}px; color: #64b5f6; margin-bottom: ${4 * SCALE}px; opacity: 0.9; }
-.premium-emoji { width: ${18 * SCALE}px; height: ${18 * SCALE}px; margin-left: ${2 * SCALE}px; }
+.premium-emoji { width: ${18 * SCALE}px; height: ${18 * SCALE}px; margin-left: ${2 * SCALE}px; vertical-align: middle; display: inline-block; }
 .link { color: #64b5f6; display: inline-block; word-break: break-all; text-decoration: none; }
 .reply-block { background: rgba(255,255,255,0.06); border-radius: ${6 * SCALE}px; padding: ${6 * SCALE}px ${10 * SCALE}px; border-left: ${4 * SCALE}px solid; margin-bottom: ${10 * SCALE}px; max-width: ${300 * SCALE}px; overflow: hidden; }
 .reply-name { font-size: ${MSG_FS * 0.72}px; font-weight: 600; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -616,7 +626,7 @@ pre { font-family: 'JetBrains Mono','Fira Code','Consolas','Courier New',monospa
                 : `<div style="font-style:italic;color:#7f91a4;font-size:0.7em">[Sticker]</div>`;
         } else {
             if (m.fName)    bInner += `<div class="f-line">Forwarded from <span style="color:#64b5f6">${m.fName}</span></div>`;
-            if (m.showName) bInner += `<div class="bubble-name" style="color:${m.color}"><span class="name-text">${m.nameHtml}</span>${m.statusB64 ? `<img src="${m.statusB64}" class="premium-emoji"/>` : ''}</div>`;
+            if (m.showName) bInner += `<div class="bubble-name" style="color:${m.color}"><span class="name-text">${m.nameHtml}</span>${m.statusEmojiHtml || ''}</div>`;
             if (m.rName)    bInner += `<div class="reply-block" style="border-left-color:${m.rColor}"><div class="reply-name" style="color:${m.rColor}">${m.rName}</div><div class="reply-text">${escapeHtml(m.rMsg)}</div></div>`;
             if (m.mediaB64) bInner += `<img src="${m.mediaB64}" class="sticker-img" style="margin-bottom:${6 * SCALE}px;"/>`;
             if (m.msgHtml)  bInner += `<div class="bubble-content">${m.msgHtml}</div>`;
