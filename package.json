@@ -1,24 +1,21 @@
 {
   "name": "quotly-lite-api",
-  "version": "2.0.0",
-  "description": "Telegram Quote Sticker Generator - Universal Unicode",
+  "version": "4.0.0",
+  "description": "Telegram Quote Sticker Generator - MTProto Edition",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js"
   },
   "dependencies": {
-    "@resvg/resvg-js": "^2.6.0",
     "axios": "^1.6.0",
     "body-parser": "^1.20.2",
-    "canvas": "^2.11.2",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "html-react-parser": "^5.1.1",
-    "react": "^18.2.0",
     "puppeteer": "^21.0.0",
-    "satori": "^0.10.13",
-    "sharp": "^0.33.2"
+    "sharp": "^0.33.2",
+    "telegram": "^2.22.2",
+    "input": "^1.0.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
