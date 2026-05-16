@@ -346,9 +346,9 @@ function emojiImgTag(emoji, cssClass = 'emoji', provider = 'apple') {
 // =============================================================================
 const ECACHE = new Map();
 
-async function getPremiumEmojiB64(id) {
-    if (ECACHE.has(id)) return ECACHE.get(id);
-    
+async function getPremiumEmojiB64(id1) {
+    if (ECACHE.has(id1)) return ECACHE.get(id1);
+    const id = id1.toString();
     try {
         // Base headers configuration used across requests
         const headers = {};
@@ -361,7 +361,7 @@ async function getPremiumEmojiB64(id) {
         const stickersUrl = `${TG_API_ROOT}/bot${BOT_TOKEN}/getCustomEmojiStickers`;
         const { data: d1 } = await axios.post(
             stickersUrl, 
-            { custom_emoji_ids: [`\"${id}\"`] }, 
+            { custom_emoji_ids: [id] }, 
             { headers }
         );
         
