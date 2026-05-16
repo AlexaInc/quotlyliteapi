@@ -5,6 +5,7 @@ const fs    = require('fs');
 const path  = require('path');
 const sharp = require('sharp');
 const axios = require('axios');
+const mtproto = require('./mtproto');
 
 // =============================================================================
 // ENVIRONMENT CONFIGURATION
@@ -22,6 +23,11 @@ const HF_TOKEN     = process.env.HFTOKEN || process.env.HF_TOKEN || '';
 console.log(`📡 Telegram API root : ${TG_API_ROOT}`);
 console.log(`📁 Telegram file root: ${TG_FILE_ROOT}`);
 if (HF_TOKEN) console.log(`🤗 HF token detected — auth header sent on ALL requests`);
+if (mtproto.isAvailable()) {
+    console.log(`🚀 MTProto enabled — premium emojis fetched directly from Telegram DC`);
+} else {
+    console.log(`ℹ️  MTProto disabled (set TG_API_ID + TG_API_HASH) — using Bot API for premium emojis`);
+}
 
 // =============================================================================
 // HTTP REQUEST HELPER
@@ -41,13 +47,11 @@ function buildTgRequestOptions(url, extra = {}) {
 }
 
 // =============================================================================
-// TELEGRAM API CALLER — tries multiple methods in order until one works
-// This handles proxies/servers that only support specific request styles
+// BOT API CALLER (used as fallback when MTProto fails)
 // =============================================================================
 async function callTelegramAPI(method, params = {}) {
     const baseUrl = `${TG_API_ROOT}/bot${BOT_TOKEN}/${method}`;
 
-    // Build query string with params JSON-encoded for arrays
     const buildQueryString = (p) => {
         const parts = [];
         for (const [k, v] of Object.entries(p)) {
@@ -59,29 +63,21 @@ async function callTelegramAPI(method, params = {}) {
 
     const qs = buildQueryString(params);
 
-    // ── Try 1: GET with query string (most compatible) ────────────────────────
+    // Try GET with query string
     try {
         const url = `${baseUrl}?${qs}`;
         const opts = buildTgRequestOptions(url, {
-            // Accept both json and text in case proxy returns wrong content-type
             headers: { 'Accept': 'application/json' },
-            // Don't throw on 4xx so we can inspect the response
             validateStatus: () => true,
         });
         const res = await axios.get(url, opts);
         if (res.status === 200) {
-            // Parse if it's a string
             const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
-            if (data && data.ok) return data;
-            // Got a JSON response with ok:false - return so caller can see error
             if (data && typeof data.ok === 'boolean') return data;
         }
-        console.warn(`   ⚠️  GET returned ${res.status}, trying POST...`);
-    } catch (e) {
-        console.warn(`   ⚠️  GET failed (${e.message}), trying POST...`);
-    }
+    } catch (e) { /* fall through */ }
 
-    // ── Try 2: POST with form-urlencoded body ─────────────────────────────────
+    // Try POST with form-urlencoded
     try {
         const opts = buildTgRequestOptions(baseUrl, {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -90,30 +86,11 @@ async function callTelegramAPI(method, params = {}) {
         const res = await axios.post(baseUrl, qs, opts);
         if (res.status === 200) {
             const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
-            if (data && data.ok) return data;
             if (data && typeof data.ok === 'boolean') return data;
         }
-        console.warn(`   ⚠️  POST form returned ${res.status}, trying POST JSON...`);
-    } catch (e) {
-        console.warn(`   ⚠️  POST form failed (${e.message}), trying POST JSON...`);
-    }
+    } catch (e) { /* fall through */ }
 
-    // ── Try 3: POST with JSON body (last resort) ──────────────────────────────
-    try {
-        const opts = buildTgRequestOptions(baseUrl, {
-            headers: { 'Content-Type': 'application/json' },
-            validateStatus: () => true,
-        });
-        const res = await axios.post(baseUrl, params, opts);
-        if (res.status === 200) {
-            const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
-            if (data && data.ok) return data;
-            if (data && typeof data.ok === 'boolean') return data;
-        }
-        throw new Error(`All request methods failed. Last status: ${res.status}`);
-    } catch (e) {
-        throw new Error(`All request methods failed for ${method}: ${e.message}`);
-    }
+    throw new Error(`Bot API failed for ${method}`);
 }
 
 // =============================================================================
@@ -197,6 +174,12 @@ async function getBrowser() {
 }
 
 getBrowser().catch(e => console.error('⚠️  Browser pre-warm failed:', e.message));
+
+// Pre-warm MTProto connection
+if (mtproto.isAvailable()) {
+    mtproto.getClient().catch(e =>
+        console.error(`⚠️  MTProto pre-warm failed: ${e.message}`));
+}
 
 // =============================================================================
 // PAGE POOL
@@ -370,64 +353,57 @@ function emojiImgTag(emoji, cssClass = 'emoji', provider = 'apple') {
 }
 
 // =============================================================================
-// PREMIUM EMOJI WITH FALLBACK
-//
-// BATCH FETCHING: All custom_emoji_ids in a message are collected first,
-// then fetched in a SINGLE API call (Telegram accepts arrays).
-// This is way faster than fetching one-by-one.
+// PREMIUM EMOJI — MTProto first, Bot API fallback, regular emoji as last resort
 // =============================================================================
 const ECACHE = new Map();
 const ECACHE_FAILED = new Set();
 
-// Batch-fetch many emoji IDs at once. Returns Map<id, base64>.
-async function batchFetchPremiumEmojis(ids) {
-    const idStrs = [...new Set(ids.map(id => String(id).trim()))]
-        .filter(s => s && s !== 'null' && s !== 'undefined')
-        .filter(s => !ECACHE.has(s) && !ECACHE_FAILED.has(s));
-
-    if (idStrs.length === 0) return;
-
+// Convert raw image Buffer to a small PNG data URI
+async function bufferToDataUri(buf) {
     try {
-        console.log(`🔍 Fetching ${idStrs.length} premium emoji(s) in batch...`);
+        const png = await sharp(buf, { animated: false })
+            .resize(128, 128, { fit: 'inside' })
+            .png()
+            .toBuffer();
+        return `data:image/png;base64,${png.toString('base64')}`;
+    } catch (e) {
+        console.warn(`⚠️  sharp conversion failed: ${e.message}`);
+        return null;
+    }
+}
 
-        // ── Step 1: getCustomEmojiStickers — pass ALL ids in one call ─────────
-        const data = await callTelegramAPI('getCustomEmojiStickers', {
-            custom_emoji_ids: idStrs
-        });
+// ── MTProto path — fast, direct from Telegram DC ─────────────────────────────
+async function batchFetchViaMTProto(ids) {
+    if (!mtproto.isAvailable()) return new Map();
+    try {
+        const t0 = Date.now();
+        const bufMap = await mtproto.fetchPremiumEmojis(ids);
+        console.log(`🚀 MTProto fetched ${bufMap.size}/${ids.length} emojis in ${Date.now() - t0}ms`);
+        return bufMap;
+    } catch (e) {
+        console.error(`❌ MTProto batch failed: ${e.message}`);
+        return new Map();
+    }
+}
 
-        if (!data.ok) {
-            console.warn(`⚠️  Batch fetch returned not-ok:`, data.description);
-            idStrs.forEach(id => ECACHE_FAILED.add(id));
-            return;
-        }
+// ── Bot API fallback — slower but works without MTProto creds ─────────────────
+async function batchFetchViaBotAPI(ids) {
+    const result = new Map();
+    try {
+        const data = await callTelegramAPI('getCustomEmojiStickers', { custom_emoji_ids: ids });
+        if (!data.ok || !data.result) return result;
 
-        const stickers = data.result || [];
-        if (stickers.length === 0) {
-            console.warn(`⚠️  No stickers returned for ${idStrs.length} ID(s)`);
-            idStrs.forEach(id => ECACHE_FAILED.add(id));
-            return;
-        }
-
-        // ── Step 2+3: For each sticker, get file path then download file ──────
-        // Parallel — much faster than sequential
-        await Promise.all(stickers.map(async (st, idx) => {
-            const idStr = idStrs[idx] || String(st.custom_emoji_id || '');
-            if (!idStr) return;
-
+        // Map stickers back to requested IDs by their custom_emoji_id field
+        await Promise.all(data.result.map(async (st) => {
+            const stId = String(st.custom_emoji_id || '');
+            if (!stId) return;
             try {
                 const fileId = st.thumbnail?.file_id || st.file_id;
-                if (!fileId) {
-                    ECACHE_FAILED.add(idStr);
-                    return;
-                }
+                if (!fileId) return;
 
                 const fileData = await callTelegramAPI('getFile', { file_id: fileId });
-                if (!fileData.ok || !fileData.result?.file_path) {
-                    ECACHE_FAILED.add(idStr);
-                    return;
-                }
+                if (!fileData.ok || !fileData.result?.file_path) return;
 
-                // Download the actual file (binary)
                 const fileUrl = `${TG_FILE_ROOT}/bot${BOT_TOKEN}/${fileData.result.file_path}`;
                 const fileOpts = buildTgRequestOptions(fileUrl, {
                     responseType: 'arraybuffer',
@@ -435,24 +411,54 @@ async function batchFetchPremiumEmojis(ids) {
                 });
                 const fileRes = await axios.get(fileUrl, fileOpts);
 
-                if (fileRes.status !== 200 || !fileRes.data || fileRes.data.length < 100) {
-                    console.warn(`⚠️  File download failed for ${idStr}: status ${fileRes.status}`);
-                    ECACHE_FAILED.add(idStr);
-                    return;
+                if (fileRes.status === 200 && fileRes.data && fileRes.data.length > 100) {
+                    result.set(stId, fileRes.data);
                 }
-
-                const b64 = `data:image/png;base64,${(await sharp(fileRes.data).resize(128, 128).png().toBuffer()).toString('base64')}`;
-                ECACHE.set(idStr, b64);
-                console.log(`✅ Premium emoji loaded: ${idStr}`);
             } catch (e) {
-                console.error(`❌ Failed to download ${idStr}: ${e.message}`);
-                ECACHE_FAILED.add(idStr);
+                console.warn(`⚠️  Bot API download failed for ${stId}: ${e.message}`);
             }
         }));
-
     } catch (e) {
-        console.error(`❌ Batch fetch failed: ${e.message}`);
-        idStrs.forEach(id => ECACHE_FAILED.add(id));
+        console.error(`❌ Bot API batch failed: ${e.message}`);
+    }
+    return result;
+}
+
+// Main batch fetcher — MTProto → Bot API
+async function batchFetchPremiumEmojis(ids) {
+    const uniqueIds = [...new Set(ids.map(id => String(id).trim()))]
+        .filter(s => s && s !== 'null' && s !== 'undefined')
+        .filter(s => !ECACHE.has(s) && !ECACHE_FAILED.has(s));
+
+    if (uniqueIds.length === 0) return;
+
+    console.log(`🔍 Fetching ${uniqueIds.length} premium emoji(s)...`);
+
+    // 1. Try MTProto first (fast, reliable)
+    let bufMap = await batchFetchViaMTProto(uniqueIds);
+
+    // 2. For any still missing, try Bot API
+    const stillMissing = uniqueIds.filter(id => !bufMap.has(id));
+    if (stillMissing.length > 0) {
+        console.log(`   ${stillMissing.length} not found via MTProto, trying Bot API...`);
+        const botMap = await batchFetchViaBotAPI(stillMissing);
+        for (const [id, buf] of botMap) bufMap.set(id, buf);
+    }
+
+    // 3. Convert all buffers to data URIs in parallel
+    await Promise.all([...bufMap.entries()].map(async ([id, buf]) => {
+        const dataUri = await bufferToDataUri(buf);
+        if (dataUri) {
+            ECACHE.set(id, dataUri);
+            console.log(`✅ Premium emoji loaded: ${id}`);
+        } else {
+            ECACHE_FAILED.add(id);
+        }
+    }));
+
+    // 4. Mark all not-fetched IDs as failed (so we use unicode fallback)
+    for (const id of uniqueIds) {
+        if (!ECACHE.has(id)) ECACHE_FAILED.add(id);
     }
 }
 
@@ -462,14 +468,10 @@ async function getPremiumEmojiB64(id) {
     if (ECACHE.has(idStr)) return ECACHE.get(idStr);
     if (ECACHE_FAILED.has(idStr)) return null;
 
-    // Single-emoji fetch (used as fallback if batch wasn't called)
     await batchFetchPremiumEmojis([idStr]);
     return ECACHE.get(idStr) || null;
 }
 
-// =============================================================================
-// PREMIUM EMOJI WRAPPER — with automatic fallback to regular emoji
-// =============================================================================
 async function renderPremiumEmojiOrFallback(customEmojiId, fallbackText, provider = 'apple', cssClass = 'msg-emoji') {
     const b64 = await getPremiumEmojiB64(customEmojiId);
 
@@ -488,13 +490,13 @@ async function renderPremiumEmojiOrFallback(customEmojiId, fallbackText, provide
         return `<img src="${b64}" class="${cssClass}"/>`;
     }
 
+    // Premium failed — fall back to regular emoji via selected provider
     if (fallbackText) {
         if (IS_EMOJI.test(fallbackText)) {
             return emojiImgTag(fallbackText, cssClass, provider);
         }
         return escapeHtml(fallbackText);
     }
-
     return '';
 }
 
@@ -506,10 +508,8 @@ function nameToHtml(text, provider = 'apple') {
     const seg = new Intl.Segmenter();
     let out = '';
     for (const { segment: c } of seg.segment(text)) {
-        if (IS_EMOJI.test(c))
-            out += emojiImgTag(c, 'emoji', provider);
-        else
-            out += escapeHtml(c);
+        if (IS_EMOJI.test(c)) out += emojiImgTag(c, 'emoji', provider);
+        else out += escapeHtml(c);
     }
     return out;
 }
@@ -536,10 +536,8 @@ async function msgToHtml(text, entities = [], provider = 'apple') {
         if (!str) return '';
         let out = '';
         for (const { segment: c } of seg.segment(str)) {
-            if (IS_EMOJI.test(c))
-                out += emojiImgTag(c, 'emoji', provider);
-            else
-                out += escapeHtml(c);
+            if (IS_EMOJI.test(c)) out += emojiImgTag(c, 'emoji', provider);
+            else out += escapeHtml(c);
         }
         return out.replace(/\n/g, '<br/>');
     };
@@ -606,7 +604,7 @@ function dummyAvatarB64(f, l, color) {
 }
 
 // =============================================================================
-// COLLECT ALL EMOJI IDs FROM A MESSAGE LIST (for batch pre-fetch)
+// COLLECT ALL EMOJI IDs FROM MESSAGES (for batch pre-fetch)
 // =============================================================================
 function collectAllEmojiIds(msgList) {
     const ids = [];
@@ -639,7 +637,7 @@ async function createImage(
             entities: messageEntities, id: '1', isAbsoluteLast: true
         }];
 
-    // ── Pre-fetch ALL premium emojis in one batch (faster!) ───────────────────
+    // Pre-fetch ALL premium emojis in one batch
     const allEmojiIds = collectAllEmojiIds(msgList);
     if (allEmojiIds.length > 0) {
         await batchFetchPremiumEmojis(allEmojiIds);
