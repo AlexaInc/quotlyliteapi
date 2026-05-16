@@ -24,11 +24,15 @@ console.log(`📁 Telegram file root: ${TG_FILE_ROOT}`);
 if (HF_TOKEN) console.log(`🤗 HF token detected — auth header sent on ALL requests`);
 
 // =============================================================================
-// HTTP REQUEST HELPER (always sends HF auth when token exists)
+// HTTP REQUEST HELPER (always sends HF auth + Referer when token exists)
 // =============================================================================
 function buildTgRequestOptions(url, extra = {}) {
-    const options = { timeout: 10000, ...extra };
-    options.headers = { ...(options.headers || {}) };
+    const extraHeaders = extra.headers || {};
+    const { headers: _, ...rest } = extra;
+
+    const options = { timeout: 10000, ...rest };
+    options.headers = { ...extraHeaders };
+
     if (HF_TOKEN) {
         options.headers['Authorization'] = `Bearer ${HF_TOKEN}`;
         options.headers['Referer']       = 'https://huggingface.co';
@@ -291,81 +295,117 @@ function emojiImgTag(emoji, cssClass = 'emoji', provider = 'apple') {
 
 // =============================================================================
 // PREMIUM EMOJI WITH FALLBACK
-// If premium emoji fetch fails (network/API/etc), we fall back to the regular
-// emoji using the selected provider — so the user never sees a missing emoji.
+//
+// FIX: Use GET requests with query string params (?key=value) instead of POST.
+// The proxy at apiroot-syncosysv3.hf.space (and the standard Telegram Bot API)
+// fully supports GET with query params, which is what your curl test verified:
+//
+//   curl ".../getCustomEmojiStickers?custom_emoji_ids=[\"123\",\"456\"]"
+//
+// Arrays must be JSON-stringified inside the query value, exactly like:
+//   custom_emoji_ids=["5210956306952758910"]
+//
+// This is the format Telegram uses and the format the proxy expects.
 // =============================================================================
-const ECACHE = new Map();         // cache successful base64 data URIs
-const ECACHE_FAILED = new Set();  // cache failed IDs so we don't retry every time
+const ECACHE = new Map();
+const ECACHE_FAILED = new Set();
+const ECACHE_INFLIGHT = new Map(); // dedupe concurrent requests for same ID
 
 async function getPremiumEmojiB64(id) {
     const idStr = String(id).trim();
     if (!idStr || idStr === 'null' || idStr === 'undefined') return null;
 
-    // Return cached success
+    // Cache hits
     if (ECACHE.has(idStr)) return ECACHE.get(idStr);
-
-    // Skip retrying known-failed IDs (within this process lifetime)
     if (ECACHE_FAILED.has(idStr)) return null;
 
-    try {
-        const stickersUrl = `${TG_API_ROOT}/bot${BOT_TOKEN}/getCustomEmojiStickers`;
-        const payload = { custom_emoji_ids: [idStr] };  // MUST be array of strings
+    // Deduplicate concurrent requests for the same emoji
+    if (ECACHE_INFLIGHT.has(idStr)) return ECACHE_INFLIGHT.get(idStr);
 
-        const { data: d1 } = await axios.post(
-            stickersUrl, payload, buildTgRequestOptions(stickersUrl)
-        );
-        const st = d1.result?.[0];
-        if (!st) {
-            console.warn(`⚠️  No sticker returned for custom_emoji_id: ${idStr}`);
+    const promise = (async () => {
+        try {
+            // ── Step 1: getCustomEmojiStickers ────────────────────────────────
+            // Use GET with query string — verified working with your proxy
+            const idsArray = JSON.stringify([idStr]);  // ["5210956306952758910"]
+            const stickersUrl =
+                `${TG_API_ROOT}/bot${BOT_TOKEN}/getCustomEmojiStickers` +
+                `?custom_emoji_ids=${encodeURIComponent(idsArray)}`;
+
+            const { data: d1 } = await axios.get(
+                stickersUrl,
+                buildTgRequestOptions(stickersUrl)
+            );
+
+            if (!d1.ok) {
+                console.warn(`⚠️  API returned not-ok for ${idStr}:`, d1.description);
+                ECACHE_FAILED.add(idStr);
+                return null;
+            }
+
+            const st = d1.result?.[0];
+            if (!st) {
+                console.warn(`⚠️  No sticker returned for ${idStr}`);
+                ECACHE_FAILED.add(idStr);
+                return null;
+            }
+
+            // ── Step 2: getFile ───────────────────────────────────────────────
+            const fileId = st.thumbnail?.file_id || st.file_id;
+            const getFileUrl =
+                `${TG_API_ROOT}/bot${BOT_TOKEN}/getFile` +
+                `?file_id=${encodeURIComponent(fileId)}`;
+
+            const { data: d2 } = await axios.get(
+                getFileUrl,
+                buildTgRequestOptions(getFileUrl)
+            );
+
+            if (!d2.ok || !d2.result?.file_path) {
+                console.warn(`⚠️  getFile failed for ${idStr}:`, d2.description);
+                ECACHE_FAILED.add(idStr);
+                return null;
+            }
+
+            // ── Step 3: Download the file ─────────────────────────────────────
+            const fileUrl = `${TG_FILE_ROOT}/bot${BOT_TOKEN}/${d2.result.file_path}`;
+            const { data: raw } = await axios.get(
+                fileUrl,
+                buildTgRequestOptions(fileUrl, { responseType: 'arraybuffer' })
+            );
+
+            const b64 = `data:image/png;base64,${(await sharp(raw).resize(128, 128).png().toBuffer()).toString('base64')}`;
+            ECACHE.set(idStr, b64);
+            console.log(`✅ Premium emoji loaded: ${idStr}`);
+            return b64;
+
+        } catch (e) {
+            console.error(`❌ Premium emoji fetch failed: ${idStr} — ${e.message}`);
+            if (e.response?.data) console.error(`   API response:`, JSON.stringify(e.response.data));
+            if (e.response?.status) console.error(`   HTTP status: ${e.response.status}`);
             ECACHE_FAILED.add(idStr);
             return null;
+        } finally {
+            ECACHE_INFLIGHT.delete(idStr);
         }
+    })();
 
-        const getFileUrl = `${TG_API_ROOT}/bot${BOT_TOKEN}/getFile`;
-        const { data: d2 } = await axios.post(
-            getFileUrl, { file_id: st.thumbnail?.file_id || st.file_id },
-            buildTgRequestOptions(getFileUrl)
-        );
-
-        const fileUrl = `${TG_FILE_ROOT}/bot${BOT_TOKEN}/${d2.result.file_path}`;
-        const { data: raw } = await axios.get(
-            fileUrl, buildTgRequestOptions(fileUrl, { responseType: 'arraybuffer' })
-        );
-
-        const b64 = `data:image/png;base64,${(await sharp(raw).resize(128, 128).png().toBuffer()).toString('base64')}`;
-        ECACHE.set(idStr, b64);
-        return b64;
-    } catch (e) {
-        console.error(`❌ Premium emoji fetch failed: ${idStr} — ${e.message}`);
-        if (e.response?.data) console.error(`   API response:`, JSON.stringify(e.response.data));
-        if (e.response?.status) console.error(`   HTTP status: ${e.response.status}`);
-        ECACHE_FAILED.add(idStr);
-        return null;
-    }
+    ECACHE_INFLIGHT.set(idStr, promise);
+    return promise;
 }
 
 // =============================================================================
 // PREMIUM EMOJI WRAPPER — with automatic fallback to regular emoji
-// 
-// fallbackEmoji = the actual unicode character (or string) that the premium
-// emoji REPLACES in the original text. If the premium fetch fails, we render
-// the fallbackEmoji using the selected emoji provider.
-//
-// Telegram entities for custom_emoji always have a fallback unicode char in
-// the message text — that's what we extract and pass in.
 // =============================================================================
 async function renderPremiumEmojiOrFallback(customEmojiId, fallbackText, provider = 'apple', cssClass = 'msg-emoji') {
     const b64 = await getPremiumEmojiB64(customEmojiId);
 
     if (b64) {
-        // Success — return the premium emoji image tag
-        // ALSO add onerror in case the data URI somehow fails to render
+        // Premium loaded — also add fallback chain in case data URI fails to render
         const fallbackUrls = fallbackText && IS_EMOJI.test(fallbackText)
             ? buildEmojiUrls(fallbackText, provider)
             : [];
 
         if (fallbackUrls.length > 0) {
-            // Chain: premium → fallback emoji URLs → hide
             let onerror = `this.style.display='none';this.onerror=null;`;
             for (let i = fallbackUrls.length - 1; i >= 0; i--) {
                 onerror = `this.onerror=function(){${onerror}};this.src='${fallbackUrls[i]}';`;
@@ -375,16 +415,14 @@ async function renderPremiumEmojiOrFallback(customEmojiId, fallbackText, provide
         return `<img src="${b64}" class="${cssClass}"/>`;
     }
 
-    // Premium fetch failed — fall back to regular emoji using selected provider
+    // Premium failed — fall back to regular emoji via selected provider
     if (fallbackText) {
         if (IS_EMOJI.test(fallbackText)) {
             return emojiImgTag(fallbackText, cssClass, provider);
         }
-        // Fallback text isn't an emoji — render it as plain text
         return escapeHtml(fallbackText);
     }
 
-    // No fallback available — return empty
     return '';
 }
 
@@ -456,9 +494,7 @@ async function msgToHtml(text, entities = [], provider = 'apple') {
             else if (['url','text_url','mention','bot_command'].includes(e.type))
                 html += '<span class="link">';
             else if (e.type === 'custom_emoji') {
-                // ── Extract the unicode emoji that this custom emoji is replacing ──
-                // Telegram entities always have a fallback unicode char in the text
-                // at offset...offset+length. We grab it and pass as fallback.
+                // Extract the unicode emoji that the custom emoji is replacing
                 const fallbackText = text.substring(e.offset, e.offset + e.length);
                 const emojiId      = String(e.custom_emoji_id);
 
@@ -547,10 +583,7 @@ async function createImage(
         const rName     = d.replySender ? nameToHtml(d.replySender, provider) : '';
         const fName     = d.forwardName ? nameToHtml(d.forwardName, provider) : '';
 
-        // ── Status emoji (the small "premium emoji" next to user name) ────────
-        // Provide a fallback star emoji "⭐" since we don't know which emoji
-        // the user has set as their status. The client can override this by
-        // passing `customEmojiFallback` in the message data.
+        // Status emoji (next to user name)
         let statusEmojiHtml = '';
         if (d.customemojiid) {
             const fallbackChar = d.customEmojiFallback || '⭐';
