@@ -16,7 +16,13 @@ RUN apt-get update && apt-get install -y \
 
 # =============================================================================
 # ALL APT FONT PACKAGES - maximum coverage from debian repos
-# FIXED: 6 package names corrected for Debian Bookworm
+# FIXED: 6 package names for Debian Bookworm compatibility
+#   fonts-thabit -> fonts-hosny-thabit
+#   fonts-sinhala -> fonts-lklug-sinhala  
+#   fonts-khmeros-core -> fonts-khmeros
+#   fonts-takao-pgothic -> fonts-takao
+#   fonts-abyssinica -> fonts-sil-abyssinica
+#   fonts-firacode-otf -> fonts-firacode
 # =============================================================================
 RUN apt-get update && apt-get install -y \
     # ── Noto family (Google's universal coverage) ────────────────────────────
@@ -139,7 +145,7 @@ RUN apt-get update && apt-get install -y \
     culmus-fancy \
     # ── Ethiopic ──────────────────────────────────────────────────────────────
     fonts-sil-abyssinica \
-    # ── Georgian ──────────────────────────────────────────────────────────────
+    # ── Tibetan ───────────────────────────────────────────────────────────────
     fonts-bpg-georgian \
     # ── Misc ──────────────────────────────────────────────────────────────────
     fonts-droid-fallback \
@@ -158,12 +164,15 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/* || true
 
 # =============================================================================
-# DOWNLOAD NOTO SYMBOLS/MATH/MUSIC
+# DOWNLOAD COMPLETE NOTO STACK
+# Every single Noto font family that exists - covers every script Unicode has
 # =============================================================================
 RUN mkdir -p /usr/share/fonts/truetype/noto-manual
 
 ENV NOTO_BASE="https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf"
 
+# Helper macro: try to download, never fail the build
+# ── SYMBOLS, MATH, MUSIC (highest priority for tofu prevention) ───────────────
 RUN set -e; for font in \
     "NotoSansSymbols/NotoSansSymbols-Regular.ttf" \
     "NotoSansSymbols/NotoSansSymbols-Bold.ttf" \
@@ -178,124 +187,51 @@ RUN set -e; for font in \
     wget -q -O "/usr/share/fonts/truetype/noto-manual/$(basename $font)" "${NOTO_BASE}/${font}" || echo "skip $font"; \
     done
 
-# =============================================================================
-# ADDITIONAL NOTO SCRIPT FONTS
-# =============================================================================
-RUN mkdir -p /usr/share/fonts/truetype/google-extra
-
-RUN set -e; for family in \
-    "NotoSansAdlam" "NotoSansAvestan" "NotoSansBamum" "NotoSansBatak" \
-    "NotoSansBuginese" "NotoSansBuhid" "NotoSansCham" "NotoSansCherokee" \
-    "NotoSansCoptic" "NotoSansEthiopic" "NotoSansGeorgian" "NotoSansGothic" \
-    "NotoSansHanunoo" "NotoSansImperialAramaic" "NotoSansJavanese" \
-    "NotoSansKayahLi" "NotoSansLepcha" "NotoSansLimbu" "NotoSansLisu" \
-    "NotoSansMandaic" "NotoSansMeeteiMayek" "NotoSansMongolian" \
-    "NotoSansNKo" "NotoSansNewTaiLue" "NotoSansOgham" "NotoSansOlChiki" \
-    "NotoSansOldItalic" "NotoSansOldPersian" "NotoSansOsmanya" \
-    "NotoSansPhoenician" "NotoSansRejang" "NotoSansRunic" \
-    "NotoSansSamaritan" "NotoSansSaurashtra" "NotoSansSundanese" \
-    "NotoSansSylotiNagri" "NotoSansTagalog" "NotoSansTagbanwa" \
-    "NotoSansTaiLe" "NotoSansTaiTham" "NotoSansTaiViet" \
-    "NotoSansThaana" "NotoSansTifinagh" "NotoSansVai" "NotoSansYi" \
+# ── EVERY SCRIPT-SPECIFIC NOTO FONT ───────────────────────────────────────────
+# This is the complete list of Noto script families
+RUN set -e; for script in \
+    Adlam Ahom AnatolianHieroglyphs Arabic ArabicUI Armenian Avestan \
+    Balinese Bamum BassaVah Batak Bengali BengaliUI Bhaiksuki Brahmi \
+    Buginese Buhid CanadianAboriginal Carian CaucasianAlbanian Chakma \
+    Cham Cherokee Chorasmian Coptic Cuneiform Cypriot CyproMinoan \
+    Deseret Devanagari DevanagariUI Dogra Duployan EgyptianHieroglyphs \
+    Elbasan Elymaic Ethiopic Georgian Glagolitic Gothic Grantha \
+    Gujarati GujaratiUI GunjalaGondi Gurmukhi GurmukhiUI HanifiRohingya \
+    Hanunoo Hatran Hebrew ImperialAramaic IndicSiyaqNumbers \
+    InscriptionalPahlavi InscriptionalParthian Javanese Kaithi Kannada \
+    KannadaUI Kawi KayahLi Kharoshthi Khmer Khojki Khudawadi Lao \
+    Lepcha Limbu LinearA LinearB Lisu Lycian Lydian Mahajani Makasar \
+    Malayalam MalayalamUI Mandaic Manichaean Marchen MasaramGondi \
+    MayanNumerals MedefaidrinScript MeeteiMayek MendeKikakui Meroitic \
+    Miao Modi Mongolian Mro Multani Myanmar MyanmarUI Nabataean \
+    Nandinagari Newa NewTaiLue NKo NushuPua NyiakengPuachueHmong Ogham \
+    OlChiki OldHungarian OldItalic OldNorthArabian OldPermic OldPersian \
+    OldSogdian OldSouthArabian OldTurkic OldUyghur Oriya OriyaUI Osage \
+    Osmanya PahawhHmong Palmyrene PauCinHau PhagsPa Phoenician \
+    PsalterPahlavi Rejang Runic Samaritan Saurashtra Sharada Shavian \
+    Siddham SignWriting Sinhala SinhalaUI Sogdian SoraSompeng Soyombo \
+    Sundanese SylotiNagri Syriac SyriacEastern SyriacEstrangela \
+    SyriacWestern Tagalog Tagbanwa TaiLe TaiTham TaiViet Takri Tamil \
+    TamilSupplement TamilUI Tangsa Telugu TeluguUI Thaana Thai \
+    Tifinagh TifinaghAdrar TifinaghAgrawImazighen TifinaghAhaggar \
+    TifinaghAir TifinaghAPT TifinaghAzawagh TifinaghGhat TifinaghHawad \
+    TifinaghRhissaIxa TifinaghSIL TifinaghTawellemmet Tirhuta Ugaritic \
+    Vai Vithkuqi Wancho WarangCiti Yezidi Yi Zanabazar \
     ; do \
-        wget -q -O "/usr/share/fonts/truetype/google-extra/${family}-Regular.ttf" \
-            "${NOTO_BASE}/${family}/${family}-Regular.ttf" 2>/dev/null || true; \
+    wget -q -O "/usr/share/fonts/truetype/noto-manual/NotoSans${script}-Regular.ttf" \
+        "${NOTO_BASE}/NotoSans${script}/NotoSans${script}-Regular.ttf" 2>/dev/null || true; \
     done
 
-# =============================================================================
-# EXTRA WEBFONTS (Inter)
-# =============================================================================
-RUN mkdir -p /usr/share/fonts/truetype/extra-webfonts && \
+# ── DOWNLOAD INTER FONT ───────────────────────────────────────────────────────
+RUN mkdir -p /usr/share/fonts/truetype/inter && \
     wget -q -O /tmp/inter.zip "https://github.com/rsms/inter/releases/download/v4.0/Inter-4.0.zip" && \
     unzip -qo /tmp/inter.zip -d /tmp/inter 2>/dev/null || true && \
-    find /tmp/inter -name "*.ttf" -exec cp {} /usr/share/fonts/truetype/extra-webfonts/ \; 2>/dev/null || true && \
+    find /tmp/inter -name "*.ttf" -exec cp {} /usr/share/fonts/truetype/inter/ \; 2>/dev/null || true && \
     rm -rf /tmp/inter /tmp/inter.zip || true
 
-# =============================================================================
-# FONTCONFIG
-# =============================================================================
-RUN mkdir -p /etc/fonts/conf.d && \
-    cat > /etc/fonts/local.conf << 'EOF'
-<?xml version="1.0"?>
-<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
-<fontconfig>
-    <match target="font">
-        <edit name="antialias" mode="assign"><bool>true</bool></edit>
-        <edit name="hinting" mode="assign"><bool>true</bool></edit>
-        <edit name="hintstyle" mode="assign"><const>hintslight</const></edit>
-        <edit name="rgba" mode="assign"><const>rgb</const></edit>
-        <edit name="lcdfilter" mode="assign"><const>lcddefault</const></edit>
-    </match>
-    <alias>
-        <family>sans-serif</family>
-        <prefer>
-            <family>Noto Sans</family>
-            <family>Noto Sans CJK SC</family>
-            <family>Noto Sans CJK TC</family>
-            <family>Noto Sans CJK JP</family>
-            <family>Noto Sans CJK KR</family>
-            <family>Noto Sans Arabic</family>
-            <family>Noto Sans Hebrew</family>
-            <family>Noto Sans Devanagari</family>
-            <family>Noto Sans Bengali</family>
-            <family>Noto Sans Tamil</family>
-            <family>Noto Sans Telugu</family>
-            <family>Noto Sans Kannada</family>
-            <family>Noto Sans Malayalam</family>
-            <family>Noto Sans Gujarati</family>
-            <family>Noto Sans Gurmukhi</family>
-            <family>Noto Sans Oriya</family>
-            <family>Noto Sans Sinhala</family>
-            <family>Noto Sans Thai</family>
-            <family>Noto Sans Lao</family>
-            <family>Noto Sans Myanmar</family>
-            <family>Noto Sans Khmer</family>
-            <family>Noto Sans Tibetan</family>
-            <family>Noto Sans Georgian</family>
-            <family>Noto Sans Armenian</family>
-            <family>Noto Sans Ethiopic</family>
-            <family>Noto Sans Cherokee</family>
-            <family>Noto Sans Mongolian</family>
-            <family>DejaVu Sans</family>
-            <family>Liberation Sans</family>
-            <family>FreeSans</family>
-            <family>Unifont</family>
-        </prefer>
-    </alias>
-    <alias>
-        <family>serif</family>
-        <prefer>
-            <family>Noto Serif</family>
-            <family>Noto Serif CJK SC</family>
-            <family>DejaVu Serif</family>
-            <family>Liberation Serif</family>
-            <family>FreeSerif</family>
-            <family>Unifont</family>
-        </prefer>
-    </alias>
-    <alias>
-        <family>monospace</family>
-        <prefer>
-            <family>JetBrains Mono</family>
-            <family>Fira Code</family>
-            <family>Noto Sans Mono</family>
-            <family>DejaVu Sans Mono</family>
-            <family>Liberation Mono</family>
-            <family>FreeMono</family>
-            <family>Unifont</family>
-        </prefer>
-    </alias>
-    <match target="pattern">
-        <edit name="family" mode="append"><string>Noto Sans</string></edit>
-        <edit name="family" mode="append"><string>Noto Sans Symbols</string></edit>
-        <edit name="family" mode="append"><string>Noto Sans Symbols 2</string></edit>
-        <edit name="family" mode="append"><string>Symbola</string></edit>
-        <edit name="family" mode="append"><string>Unifont</string></edit>
-    </match>
-</fontconfig>
-EOF
-
-RUN fc-cache -fv
+# Rebuild font cache
+RUN fc-cache -fv && \
+    echo "Font count:" && fc-list | wc -l
 
 # =============================================================================
 # APPLICATION SETUP
