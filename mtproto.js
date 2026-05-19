@@ -89,10 +89,8 @@ async function getClient() {
 
 // =============================================================================
 // Download ONE emoji document — handles animated/static automatically
-// 
-// Returns: { buffer, mimeType, isStaticThumb } or null
-
-// ... existing code ...
+// Returns: { buffer, mimeType, isStaticThumb, originalMime } or null
+// =============================================================================
 async function downloadEmojiDocument(c, doc) {
     if (!doc || doc.className === 'DocumentEmpty' || !doc.id) return null;
 
@@ -128,9 +126,10 @@ async function downloadEmojiDocument(c, doc) {
             }
         }
 
+        // Execute download via GramJS client
         const buffer = await c.downloadMedia(mediaToDownload, { 
             workers: 1,
-            timeout: 20 
+            timeout: 20 // 20 seconds timeout
         });
 
         if (!buffer || buffer.length < 10) return null;
@@ -146,23 +145,6 @@ async function downloadEmojiDocument(c, doc) {
         return null;
     }
 }
-        }
-
-        // Use a higher timeout for downloads
-        const buffer = await c.downloadMedia(mediaToDownload, { 
-            workers: 1,
-            timeout: 20 // 20 seconds
-        });
-
-        if (!buffer || buffer.length < 10) return null;
-
-        return {
-            buffer,
-            mimeType: resolvedMime,
-            isStaticThumb,
-            originalMime: doc.mimeType,
-        };
-// ... existing code ...
 
 // =============================================================================
 // MAIN BATCH FETCHER
@@ -175,8 +157,7 @@ async function fetchPremiumEmojis(ids) {
     try {
         const c = await getClient();
 
-        // ── Prepare ID list — gramjs accepts string IDs in the array ──────────
-        // (no BigInt conversion needed — gramjs handles it internally)
+        // Standardize IDs into strings for lookup consistency
         const documentIds = ids
             .map(id => String(id).trim())
             .filter(id => id && id !== 'null' && id !== 'undefined');
@@ -190,7 +171,8 @@ async function fetchPremiumEmojis(ids) {
         try {
             documents = await c.invoke(
                 new Api.messages.GetCustomEmojiDocuments({
-                    documentId: documentIds,
+                    // Explicitly cast string IDs to BigInt primitives for the TL vector<long> requirement
+                    documentId: documentIds.map(id => BigInt(id)),
                 })
             );
         } catch (e) {
@@ -217,8 +199,7 @@ async function fetchPremiumEmojis(ids) {
                 return;
             }
 
-            // Match document back to original request ID
-            // Use position-based matching as fallback if IDs don't match
+            // Match document back to original requested tracking string ID
             const docIdStr = doc.id ? doc.id.toString() : '';
             const originalId = documentIds.includes(docIdStr)
                 ? docIdStr
