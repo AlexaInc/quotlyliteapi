@@ -175,7 +175,7 @@ app.post('/api/update', (req, res) => {
 
 // ── Start server ──────────────────────────────────────────────────────────────
 // Bind to 0.0.0.0 so HuggingFace Spaces (and Docker) can access it externally
-const server = app.listen(port, '0.0.0.0', () => {
+const server = app.listen(port, () => {
     console.log(`\n🚀 Premium Quoter UI: http://0.0.0.0:${port}`);
     console.log(`ℹ️  Hugging Face Space is now active.`);
     console.log(`[READY] Server accepting connections on port ${port}\n`);
