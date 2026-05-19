@@ -135,443 +135,180 @@ async function callTelegramAPI(method, params = {}) {
 // =============================================================================
 // SHARED BROWSER
 // =============================================================================
-let sharedBrowser = null;
-let browserLock   = false;
+let browserInstance = null;
 
 async function getBrowser() {
-    if (sharedBrowser && sharedBrowser.connected) return sharedBrowser;
-    if (browserLock) {
-        await new Promise(r => setTimeout(r, 100));
-        return getBrowser();
-    }
-    browserLock = true;
-    try {
-        console.log('🌐 Launching Chromium browser...');
-        sharedBrowser = await puppeteer.launch({
-            headless: 'new',
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-            args: [
-                '--no-sandbox', '--disable-setuid-sandbox',
-                '--disable-gpu', '--disable-dev-shm-usage',
-                '--no-zygote', '--single-process',
-                '--hide-scrollbars', '--disable-web-security',
-                '--disable-extensions', '--disable-background-networking',
-                '--disable-default-apps', '--disable-sync',
-                '--disable-translate', '--metrics-recording-only',
-                '--no-first-run', '--safebrowsing-disable-auto-update',
-                '--js-flags=--max-old-space-size=512',
-                '--font-render-hinting=none',
-                '--enable-font-antialiasing',
-            ]
-        });
-        sharedBrowser.on('disconnected', () => {
-            console.log('⚠️  Browser disconnected — will relaunch on next request');
-            sharedBrowser = null;
-        });
-        console.log('✅ Browser ready');
-    } finally { browserLock = false; }
-    return sharedBrowser;
-}
+    if (browserInstance && browserInstance.isConnected()) return browserInstance;
 
-getBrowser().catch(e => console.error('⚠️  Browser pre-warm failed:', e.message));
+    const launchArgs = [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--font-render-hinting=none',
+        '--disable-font-subpixel-positioning',
+        '--enable-font-antialiasing',
+    ];
 
-// Pre-warm MTProto connection
-if (mtproto.isAvailable()) {
-    mtproto.getClient().catch(e =>
-        console.error(`⚠️  MTProto pre-warm failed: ${e.message}`));
-}
-
-// =============================================================================
-// PAGE POOL
-// =============================================================================
-const PAGE_POOL     = [];
-const PAGE_POOL_MAX = 3;
-
-async function acquirePage() {
-    if (PAGE_POOL.length > 0) {
-        const page = PAGE_POOL.pop();
-        try { await page.evaluate(() => true); return page; }
-        catch { /* dead page */ }
-    }
-    const browser = await getBrowser();
-    const page    = await browser.newPage();
-
-    await page.setRequestInterception(true);
-    page.on('request', req => {
-        const url = req.url();
-        if (
-            url.startsWith('data:') ||
-            url.includes('cdn.jsdelivr.net') ||
-            url.includes('twemoji.maxcdn.com')
-        ) {
-            req.continue();
-        } else if (url.startsWith('http')) {
-            req.abort();
-        } else {
-            req.continue();
-        }
+    browserInstance = await puppeteer.launch({
+        headless: 'new',
+        args: launchArgs,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        defaultViewport: { width: 512, height: 512, deviceScaleFactor: 2 },
     });
 
-    await page.setViewport({ width: 5000, height: 5000, deviceScaleFactor: 1 });
-    return page;
-}
-
-function releasePage(page) {
-    if (PAGE_POOL.length < PAGE_POOL_MAX) PAGE_POOL.push(page);
-    else page.close().catch(() => {});
+    console.log('🌐 Browser launched');
+    return browserInstance;
 }
 
 // =============================================================================
-// FONT STACK FOR CSS
+// EMOJI PROVIDERS
 // =============================================================================
-const FONT_STACK_ARRAY = [
-    'Noto Sans', 'DejaVu Sans', 'Liberation Sans', 'FreeSans',
-    'Noto Sans Math', 'Noto Sans Symbols2', 'Noto Sans Symbols',
-    'Symbola', 'Noto Music',
-    'Noto Sans CJK', 'Noto Sans CJK SC', 'Noto Sans CJK JP',
-    'Noto Sans CJK KR', 'WenQuanYi Micro Hei',
-    'Noto Sans Arabic', 'Amiri', 'Scheherazade',
-    'Noto Sans Devanagari', 'Noto Sans Bengali', 'Noto Sans Tamil',
-    'Noto Sans Telugu', 'Noto Sans Kannada', 'Noto Sans Malayalam',
-    'Noto Sans Gujarati', 'Noto Sans Gurmukhi', 'Noto Sans Oriya',
-    'Noto Sans Sinhala',
-    'Noto Sans Thai', 'Noto Sans Lao', 'Noto Sans Khmer', 'Noto Sans Myanmar',
-    'Noto Sans Hebrew', 'Noto Sans Syriac', 'Noto Sans Thaana',
-    'Noto Sans Georgian', 'Noto Sans Armenian', 'Noto Sans Ethiopic',
-    'Noto Sans Mongolian', 'Noto Serif Tibetan',
-    'Noto Sans Cherokee', 'Noto Sans Canadian Aboriginal',
-    'Noto Sans Tifinagh', 'Noto Sans Vai', 'Noto Sans NKo',
-    'Noto Sans Adlam', 'Noto Sans Bamum',
-    'Noto Sans Runic', 'Noto Sans Ogham', 'Noto Sans Gothic',
-    'Noto Sans Old Italic', 'Noto Sans Old Persian',
-    'Noto Sans Old Turkic', 'Noto Sans Phoenician',
-    'Noto Sans Ugaritic', 'Noto Sans Cuneiform',
-    'Noto Sans Egyptian Hieroglyphs', 'Noto Sans Linear A',
-    'Noto Sans Linear B', 'Noto Sans Glagolitic',
-    'Noto Sans Duployan', 'Noto Sans SignWriting',
-    'Noto Sans Deseret', 'Noto Sans Shavian', 'Noto Sans Osmanya',
-    'Unifont Upper', 'Unifont',
-    'sans-serif'
-];
-
-const CSS_FONT = FONT_STACK_ARRAY.map(f => `'${f}'`).join(',');
-
-// =============================================================================
-// UTILITIES
-// =============================================================================
-function getTelegramColor(id) {
-    const map = new Map([
-        [0, '#FF516A'], [1, '#FF9442'], [2, '#C66FFF'],
-        [3, '#50D892'], [4, '#64D4F5'], [5, '#5095ED'],
-        [6, '#FF66A6'], [7, '#FF8280'], [8, '#EDD64E'], [9, '#C66FFF']
-    ]);
-    return map.get(parseInt(id) % 10) || '#00ffff';
-}
-
-function escapeHtml(t) {
-    return t
-        ? t.toString()
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-            .replace(/'/g, '&apos;')
-        : '';
-}
-
-// =============================================================================
-// EMOJI UTILITIES — multi-provider CDN with automatic fallback chain
-// =============================================================================
-const IS_EMOJI = /(\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\p{Emoji_Modifier_Base})/u;
-
-const EMOJI_PROVIDERS = {
-    apple: (cps) => buildCodepointVariants(cps).map(cp =>
-        `https://cdn.jsdelivr.net/npm/emoji-datasource-apple/img/apple/64/${cp}.png`),
-    google: (cps) => buildCodepointVariants(cps).map(cp =>
-        `https://cdn.jsdelivr.net/npm/emoji-datasource-google/img/google/64/${cp}.png`),
-    twitter: (cps) => buildCodepointVariants(cps).map(cp =>
-        `https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/${cp}.png`),
-    facebook: (cps) => buildCodepointVariants(cps).map(cp =>
-        `https://cdn.jsdelivr.net/npm/emoji-datasource-facebook/img/facebook/64/${cp}.png`),
-    microsoft: (cps) => buildCodepointVariants(cps).map(cp =>
-        `https://cdn.jsdelivr.net/npm/emoji-datasource-microsoft/img/microsoft/64/${cp}.png`),
-    samsung: (cps) => buildCodepointVariants(cps).map(cp =>
-        `https://cdn.jsdelivr.net/npm/emoji-datasource-samsung/img/samsung/64/${cp}.png`),
-    whatsapp: (cps) => buildCodepointVariants(cps).map(cp =>
-        `https://cdn.jsdelivr.net/npm/emoji-datasource-whatsapp/img/whatsapp/64/${cp}.png`),
-    openmoji: (cps) => buildCodepointVariants(cps).map(cp =>
-        `https://cdn.jsdelivr.net/npm/openmoji@latest/color/72x72/${cp.toUpperCase()}.png`),
-    emojione: (cps) => buildCodepointVariants(cps).map(cp =>
-        `https://cdn.jsdelivr.net/npm/emoji-datasource-joypixels/img/joypixels/64/${cp}.png`),
+const EMOJI_CDN_PROVIDERS = {
+    apple:     (code) => `https://cdn.jsdelivr.net/gh/nicbou/emoji-cdn@master/apple/${code}.png`,
+    google:    (code) => `https://cdn.jsdelivr.net/gh/nicbou/emoji-cdn@master/google/${code}.png`,
+    twitter:   (code) => `https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/${code}.png`,
+    facebook:  (code) => `https://cdn.jsdelivr.net/gh/nicbou/emoji-cdn@master/facebook/${code}.png`,
+    samsung:   (code) => `https://cdn.jsdelivr.net/gh/nicbou/emoji-cdn@master/samsung/${code}.png`,
+    microsoft: (code) => `https://cdn.jsdelivr.net/gh/nicbou/emoji-cdn@master/microsoft/${code}.png`,
+    whatsapp:  (code) => `https://cdn.jsdelivr.net/gh/nicbou/emoji-cdn@master/whatsapp/${code}.png`,
 };
 
-function emojiToCodepoints(emoji) {
-    const r = []; let c = 0, p = 0;
-    for (let i = 0; i < emoji.length; i++) {
-        c = emoji.charCodeAt(i);
-        if (p) { r.push((0x10000 + ((p - 0xD800) << 10) + (c - 0xDC00)).toString(16)); p = 0; }
-        else if (0xD800 <= c && c <= 0xDBFF) p = c;
-        else r.push(c.toString(16));
-    }
-    return r;
-}
-
-function buildCodepointVariants(cps) {
-    const joined      = cps.join('-');
-    const noFe0f      = cps.filter(c => c !== 'fe0f').join('-');
-    const noZwjFe0f   = joined.includes('200d') ? joined : noFe0f;
-    const baseOnly    = cps[0];
-    const noFe0fNoVar = cps.filter(c => c !== 'fe0f' && c !== '200d').join('-');
-    return [...new Set([noZwjFe0f, joined, noFe0f, noFe0fNoVar, baseOnly])].filter(Boolean);
-}
-
-function buildEmojiUrls(emoji, provider = 'apple') {
-    const cps = emojiToCodepoints(emoji);
-    if (cps.length === 0) return [];
-
-    const primaryProvider = EMOJI_PROVIDERS[provider] ? provider : 'apple';
-    const urls = [];
-
-    urls.push(...EMOJI_PROVIDERS[primaryProvider](cps));
-
-    const fallbackOrder = ['apple', 'google', 'twitter', 'facebook'];
-    for (const fp of fallbackOrder) {
-        if (fp === primaryProvider) continue;
-        urls.push(...EMOJI_PROVIDERS[fp](cps));
-    }
-
-    return urls;
-}
-
-function emojiImgTag(emoji, cssClass = 'emoji', provider = 'apple') {
-    const urls = buildEmojiUrls(emoji, provider);
-    if (urls.length === 0) return escapeHtml(emoji);
-
-    let onerror = `this.style.display='none';this.onerror=null;`;
-    for (let i = urls.length - 1; i >= 1; i--) {
-        onerror = `this.onerror=function(){${onerror}};this.src='${urls[i]}';`;
-    }
-    return `<img src="${urls[0]}" class="${cssClass}" onerror="${onerror}"/>`;
+function getEmojiUrl(emoji, provider = 'apple') {
+    const codes = [...emoji].map(c => c.codePointAt(0).toString(16)).join('-');
+    const getUrl = EMOJI_CDN_PROVIDERS[provider] || EMOJI_CDN_PROVIDERS.apple;
+    return getUrl(codes);
 }
 
 // =============================================================================
-// PREMIUM EMOJI — MTProto first, Bot API fallback, regular emoji as last resort
+// PREMIUM EMOJI RESOLVER
 // =============================================================================
-const ECACHE = new Map();
-const ECACHE_FAILED = new Set();
+const premiumEmojiCache = new Map();
 
-// Convert raw image Buffer to a small PNG data URI
-// Convert raw image Buffer to a small PNG data URI
-// Handles: JPEG (static thumbs), WEBP, PNG, animated WebP frames
-async function bufferToDataUri(buf) {
-    if (!buf || buf.length < 50) return null;
+async function fetchPremiumEmojiAsBase64(emojiId) {
+    if (premiumEmojiCache.has(emojiId)) return premiumEmojiCache.get(emojiId);
 
     try {
-        // sharp handles JPEG, PNG, WebP (incl. animated → first frame)
-        // For animated WebP we use { animated: false } to get just first frame
-        const png = await sharp(buf, { animated: false, pages: 1 })
-            .resize(128, 128, { fit: 'inside' })
-            .png()
-            .toBuffer();
-        return `data:image/png;base64,${png.toString('base64')}`;
-    } catch (e) {
-        // If sharp can't handle it (e.g. .tgs Lottie or unknown format)
-        // try without options
-        try {
-            const png = await sharp(buf)
-                .resize(128, 128, { fit: 'inside' })
-                .png()
-                .toBuffer();
-            return `data:image/png;base64,${png.toString('base64')}`;
-        } catch (e2) {
-            console.warn(`⚠️  sharp can't convert buffer (size=${buf.length}): ${e2.message}`);
-            // Last resort: detect if it's TGS (Lottie) — we can't render those without lottie lib
-            if (buf.slice(0, 2).toString('hex') === '1f8b') {
-                console.warn(`   It's a gzipped TGS file — needs Lottie library to render`);
-            }
-            return null;
-        }
-    }
-}
-
-// ── MTProto path — fast, direct from Telegram DC ─────────────────────────────
-async function batchFetchViaMTProto(ids) {
-    if (!mtproto.isAvailable()) return new Map();
-    try {
-        const t0 = Date.now();
-        const bufMap = await mtproto.fetchPremiumEmojis(ids);
-        console.log(`🚀 MTProto fetched ${bufMap.size}/${ids.length} emojis in ${Date.now() - t0}ms`);
-        return bufMap;
-    } catch (e) {
-        console.error(`❌ MTProto batch failed: ${e.message}`);
-        return new Map();
-    }
-}
-
-// ── Bot API fallback — slower but works without MTProto creds ─────────────────
-async function batchFetchViaBotAPI(ids) {
-    const result = new Map();
-    try {
-        const data = await callTelegramAPI('getCustomEmojiStickers', { custom_emoji_ids: ids });
-        if (!data.ok || !data.result) return result;
-
-        // Map stickers back to requested IDs by their custom_emoji_id field
-        await Promise.all(data.result.map(async (st) => {
-            const stId = String(st.custom_emoji_id || '');
-            if (!stId) return;
-            try {
-                const fileId = st.thumbnail?.file_id || st.file_id;
-                if (!fileId) return;
-
-                const fileData = await callTelegramAPI('getFile', { file_id: fileId });
-                if (!fileData.ok || !fileData.result?.file_path) return;
-
-                const fileUrl = `${TG_FILE_ROOT}/bot${BOT_TOKEN}/${fileData.result.file_path}`;
-                const fileOpts = buildTgRequestOptions(fileUrl, {
-                    responseType: 'arraybuffer',
-                    validateStatus: () => true,
-                });
-                const fileRes = await axios.get(fileUrl, fileOpts);
-
-                if (fileRes.status === 200 && fileRes.data && fileRes.data.length > 100) {
-                    result.set(stId, fileRes.data);
+        // Try MTProto first
+        if (mtproto.isAvailable()) {
+            const docs = await mtproto.getCustomEmojiDocuments([emojiId]);
+            if (docs && docs.size > 0) {
+                const doc = docs.values().next().value;
+                if (doc && doc.buffer) {
+                    let imgBuf = doc.buffer;
+                    // Convert to PNG if needed
+                    if (doc.mimeType !== 'image/png' && doc.mimeType !== 'image/webp') {
+                        try {
+                            imgBuf = await sharp(imgBuf).png().toBuffer();
+                        } catch (e) { /* use original */ }
+                    }
+                    const b64 = `data:image/png;base64,${imgBuf.toString('base64')}`;
+                    premiumEmojiCache.set(emojiId, b64);
+                    return b64;
                 }
-            } catch (e) {
-                console.warn(`⚠️  Bot API download failed for ${stId}: ${e.message}`);
             }
-        }));
+        }
+
+        // Fallback: Bot API getCustomEmojiStickers
+        const result = await callTelegramAPI('getCustomEmojiStickers', {
+            custom_emoji_ids: JSON.stringify([emojiId])
+        });
+
+        if (result && result.ok && result.result && result.result.length > 0) {
+            const sticker = result.result[0];
+            let fileId = sticker.thumbnail ? sticker.thumbnail.file_id : sticker.file_id;
+
+            const fileResult = await callTelegramAPI('getFile', { file_id: fileId });
+            if (fileResult && fileResult.ok && fileResult.result) {
+                const fileUrl = `${TG_FILE_ROOT}/bot${BOT_TOKEN}/${fileResult.result.file_path}`;
+                const opts = buildTgRequestOptions(fileUrl, { responseType: 'arraybuffer' });
+                const response = await axios.get(fileUrl, opts);
+
+                let imgBuf = Buffer.from(response.data);
+                try {
+                    imgBuf = await sharp(imgBuf).resize(100, 100, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+                } catch (e) { /* use original */ }
+
+                const b64 = `data:image/png;base64,${imgBuf.toString('base64')}`;
+                premiumEmojiCache.set(emojiId, b64);
+                return b64;
+            }
+        }
     } catch (e) {
-        console.error(`❌ Bot API batch failed: ${e.message}`);
-    }
-    return result;
-}
-
-// Main batch fetcher — MTProto → Bot API
-async function batchFetchPremiumEmojis(ids) {
-    const uniqueIds = [...new Set(ids.map(id => String(id).trim()))]
-        .filter(s => s && s !== 'null' && s !== 'undefined')
-        .filter(s => !ECACHE.has(s) && !ECACHE_FAILED.has(s));
-
-    if (uniqueIds.length === 0) return;
-
-    console.log(`🔍 Fetching ${uniqueIds.length} premium emoji(s)...`);
-
-    // 1. Try MTProto first (fast, reliable)
-    let bufMap = await batchFetchViaMTProto(uniqueIds);
-
-    // 2. For any still missing, try Bot API
-    const stillMissing = uniqueIds.filter(id => !bufMap.has(id));
-    if (stillMissing.length > 0) {
-        console.log(`   ${stillMissing.length} not found via MTProto, trying Bot API...`);
-        const botMap = await batchFetchViaBotAPI(stillMissing);
-        for (const [id, buf] of botMap) bufMap.set(id, buf);
+        console.warn(`⚠️  Failed to fetch premium emoji ${emojiId}: ${e.message}`);
     }
 
-    // 3. Convert all buffers to data URIs in parallel
-    await Promise.all([...bufMap.entries()].map(async ([id, buf]) => {
-        const dataUri = await bufferToDataUri(buf);
-        if (dataUri) {
-            ECACHE.set(id, dataUri);
-            console.log(`✅ Premium emoji loaded: ${id}`);
-        } else {
-            ECACHE_FAILED.add(id);
-        }
-    }));
-
-    // 4. Mark all not-fetched IDs as failed (so we use unicode fallback)
-    for (const id of uniqueIds) {
-        if (!ECACHE.has(id)) ECACHE_FAILED.add(id);
-    }
+    premiumEmojiCache.set(emojiId, null);
+    return null;
 }
 
-async function getPremiumEmojiB64(id) {
-    const idStr = String(id).trim();
-    if (!idStr || idStr === 'null' || idStr === 'undefined') return null;
-    if (ECACHE.has(idStr)) return ECACHE.get(idStr);
-    if (ECACHE_FAILED.has(idStr)) return null;
-
-    await batchFetchPremiumEmojis([idStr]);
-    return ECACHE.get(idStr) || null;
-}
-
-async function renderPremiumEmojiOrFallback(customEmojiId, fallbackText, provider = 'apple', cssClass = 'msg-emoji') {
-    const b64 = await getPremiumEmojiB64(customEmojiId);
-
+async function renderPremiumEmojiOrFallback(emojiId, fallbackText, provider, cssClass = 'msg-emoji') {
+    const b64 = await fetchPremiumEmojiAsBase64(emojiId);
     if (b64) {
-        const fallbackUrls = fallbackText && IS_EMOJI.test(fallbackText)
-            ? buildEmojiUrls(fallbackText, provider)
-            : [];
-
-        if (fallbackUrls.length > 0) {
-            let onerror = `this.style.display='none';this.onerror=null;`;
-            for (let i = fallbackUrls.length - 1; i >= 0; i--) {
-                onerror = `this.onerror=function(){${onerror}};this.src='${fallbackUrls[i]}';`;
-            }
-            return `<img src="${b64}" class="${cssClass}" onerror="${onerror}"/>`;
-        }
-        return `<img src="${b64}" class="${cssClass}"/>`;
+        return `<img src="${b64}" class="${cssClass}" alt="${fallbackText}" style="width:20px;height:20px;vertical-align:middle;display:inline-block;" />`;
     }
-
-    // Premium failed — fall back to regular emoji via selected provider
-    if (fallbackText) {
-        if (IS_EMOJI.test(fallbackText)) {
-            return emojiImgTag(fallbackText, cssClass, provider);
-        }
-        return escapeHtml(fallbackText);
-    }
-    return '';
+    return `<span class="${cssClass}">${escapeHtml(fallbackText)}</span>`;
 }
 
 // =============================================================================
-// NAME RENDERING
+// HTML HELPERS
 // =============================================================================
-function nameToHtml(text, provider = 'apple') {
-    if (!text) return '';
-    const seg = new Intl.Segmenter();
-    let out = '';
-    for (const { segment: c } of seg.segment(text)) {
-        if (IS_EMOJI.test(c)) out += emojiImgTag(c, 'emoji', provider);
-        else out += escapeHtml(c);
-    }
-    return out;
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Telegram name color palette
+const NAME_COLORS = [
+    '#FC5C57', // 0 - red
+    '#33B5E5', // 1 - blue
+    '#8E24AA', // 2 - purple
+    '#4CAF50', // 3 - green
+    '#FF9800', // 4 - orange
+    '#E91E63', // 5 - pink
+    '#00BCD4', // 6 - cyan
+    '#FFEB3B', // 7 - yellow
+    '#795548', // 8 - brown
+    '#607D8B', // 9 - blue grey
+];
+
+function getNameColor(colorId) {
+    const id = parseInt(colorId, 10) || 0;
+    return NAME_COLORS[id % NAME_COLORS.length];
 }
 
 // =============================================================================
-// MESSAGE HTML BUILDER
+// ENTITY PARSER - Telegram entities to HTML
 // =============================================================================
-async function msgToHtml(text, entities = [], provider = 'apple') {
+async function entitiesToHtml(text, entities = [], provider = 'apple') {
     if (!text) return '';
-    text = text.replace(/ (https?:\/\/|t\.me\/|Telegram\.me\/|@\w+)/gi, '\n$1');
+    if (!entities || entities.length === 0) return escapeHtml(text);
 
-    const sorted = (entities || []).sort((a, b) => a.offset - b.offset || b.length - a.length);
-    let tags = [];
-    for (const e of sorted) {
-        tags.push({ pos: e.offset,            type: 'open',  info: e });
+    // Build open/close tags sorted by position
+    const tags = [];
+    for (const e of entities) {
+        tags.push({ pos: e.offset, type: 'open', info: e });
         tags.push({ pos: e.offset + e.length, type: 'close', info: e });
     }
-    tags.sort((a, b) => a.pos - b.pos || (a.type === 'close' ? -1 : 1));
+    tags.sort((a, b) => a.pos - b.pos || (a.type === 'open' ? -1 : 1));
 
-    let html = '', cursor = 0;
-    const seg = new Intl.Segmenter();
-
-    const applyText = (str) => {
-        if (!str) return '';
-        let out = '';
-        for (const { segment: c } of seg.segment(str)) {
-            if (IS_EMOJI.test(c)) out += emojiImgTag(c, 'emoji', provider);
-            else out += escapeHtml(c);
-        }
-        return out.replace(/\n/g, '<br/>');
-    };
+    let html = '';
+    let cursor = 0;
 
     for (let i = 0; i < tags.length; i++) {
         const t = tags[i];
-        if (t.pos > cursor) { html += applyText(text.substring(cursor, t.pos)); cursor = t.pos; }
+
+        // Add text before this tag
+        if (t.pos > cursor) {
+            html += escapeHtml(text.substring(cursor, t.pos));
+            cursor = t.pos;
+        }
+
         if (t.type === 'open') {
             const e = t.info;
-            if (['url','text_url','mention','bot_command'].includes(e.type)) {
-                const plain = html.replace(/<[^>]*>/g, '');
-                if (plain.length > 0 && /[a-z0-9\u0D80-\u0DFF]$/i.test(plain) && !html.endsWith('<br/>'))
-                    html += '<br/>';
-            }
             if      (e.type === 'bold')          html += '<b>';
             else if (e.type === 'italic')        html += '<i>';
             else if (e.type === 'underline')     html += '<u>';
@@ -600,251 +337,285 @@ async function msgToHtml(text, entities = [], provider = 'apple') {
             else if (e.type === 'strikethrough') html += '</s>';
             else if (e.type === 'code')          html += '</code>';
             else if (e.type === 'pre')           html += '</pre>';
-            else if (['spoiler','blockquote','expandable_blockquote',
-                      'url','text_url','mention','bot_command'].includes(e.type))
+            else if (e.type === 'spoiler')       html += '</span>';
+            else if (e.type === 'blockquote' || e.type === 'expandable_blockquote')
+                html += '</span>';
+            else if (['url','text_url','mention','bot_command'].includes(e.type))
                 html += '</span>';
         }
     }
-    html += applyText(text.substring(cursor));
+
+    // Remaining text after last entity
+    if (cursor < text.length) {
+        html += escapeHtml(text.substring(cursor));
+    }
+
     return html;
 }
 
 // =============================================================================
-// AVATAR GENERATOR (SVG, no canvas needed)
+// AVATAR HELPER
 // =============================================================================
-function dummyAvatarB64(f, l, color) {
-    const initials = ((f?.[0] || '') + (l?.[0] || '')).toUpperCase().substring(0, 2) || '?';
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
-<circle cx="100" cy="100" r="100" fill="${color}"/>
-<text x="100" y="100" text-anchor="middle" dominant-baseline="central"
-      fill="white" font-family="Noto Sans, DejaVu Sans, sans-serif"
-      font-weight="bold" font-size="76">${escapeHtml(initials)}</text>
-</svg>`;
-    return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+function generateAvatarSvg(firstName, lastName, colorId) {
+    const initials = ((firstName || '')[0] || '') + ((lastName || '')[0] || '');
+    const color = getNameColor(colorId);
+    return `data:image/svg+xml,${encodeURIComponent(`
+        <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+            <rect width="100" height="100" rx="50" fill="${color}"/>
+            <text x="50" y="50" text-anchor="middle" dominant-baseline="central"
+                  font-family="Arial, sans-serif" font-size="40" font-weight="bold" fill="white">
+                ${initials.toUpperCase()}
+            </text>
+        </svg>
+    `)}`;
 }
 
 // =============================================================================
-// COLLECT ALL EMOJI IDs FROM MESSAGES (for batch pre-fetch)
+// BUILD QUOTE HTML
 // =============================================================================
-function collectAllEmojiIds(msgList) {
-    const ids = [];
-    for (const d of msgList) {
-        if (d.customemojiid) ids.push(String(d.customemojiid));
-        if (Array.isArray(d.entities)) {
-            for (const e of d.entities) {
-                if (e.type === 'custom_emoji' && e.custom_emoji_id != null) {
-                    ids.push(String(e.custom_emoji_id));
-                }
-            }
-        }
-    }
-    return ids;
-}
+async function buildQuoteHtml(messages) {
+    let messagesHtml = '';
 
-// =============================================================================
-// MAIN IMAGE GENERATOR
-// =============================================================================
-async function createImage(
-    firstName, lastName, customemojiid, message,
-    nameColorId, inputImageBuffer, replySender, replyMessage,
-    replysendercolor, messageEntities = []
-) {
-    let msgList = Array.isArray(firstName)
-        ? firstName
-        : [{
-            firstName, lastName, customemojiid, message, nameColorId,
-            inputImageBuffer, replySender, replyMessage, replysendercolor,
-            entities: messageEntities, id: '1', isAbsoluteLast: true
-        }];
+    for (let idx = 0; idx < messages.length; idx++) {
+        const msg = messages[idx];
+        const firstName = msg.firstName || 'User';
+        const lastName  = msg.lastName || '';
+        const colorId   = parseInt(msg.nameColorId || msg.namecolorid || 0, 10);
+        const nameColor = getNameColor(colorId);
+        const provider  = msg.emojiProvider || 'apple';
+        const isLast    = idx === messages.length - 1;
 
-    // Pre-fetch ALL premium emojis in one batch
-    const allEmojiIds = collectAllEmojiIds(msgList);
-    if (allEmojiIds.length > 0) {
-        await batchFetchPremiumEmojis(allEmojiIds);
-    }
-
-    const SCALE   = 4.5;
-    const PP_SIZE = 38 * SCALE;
-    const NAME_FS = 16 * SCALE;
-    const MSG_FS  = 16 * SCALE;
-
-    const rows = await Promise.all(msgList.map(async (d) => {
-        const provider = d.emojiProvider || 'apple';
-
-        const name     = `${d.firstName || ''} ${d.lastName || ''}`.trim() || 'User';
-        const color    = getTelegramColor(d.nameColorId);
-        const nameHtml = nameToHtml(name, provider);
-
-        const avatarB64 = d.inputImageBuffer
-            ? `data:image/png;base64,${(await sharp(d.inputImageBuffer).png().toBuffer()).toString('base64')}`
-            : dummyAvatarB64(d.firstName, d.lastName, color);
-
-        let mediaB64 = null;
-        if (d.mediaBuffer) {
-            try {
-                const mb = await sharp(d.mediaBuffer)
-                    .resize(1000, 1000, { fit: 'inside', kernel: 'lanczos3' })
-                    .png().toBuffer();
-                mediaB64 = `data:image/png;base64,${mb.toString('base64')}`;
-            } catch { mediaB64 = null; }
-        }
-
-        const isSticker = !!d.mediaBuffer && (!d.message || !d.message.trim());
-        const rColor    = getTelegramColor(d.replysendercolor || 0);
-        const rName     = d.replySender ? nameToHtml(d.replySender, provider) : '';
-        const fName     = d.forwardName ? nameToHtml(d.forwardName, provider) : '';
-
-        let statusEmojiHtml = '';
-        if (d.customemojiid) {
-            const fallbackChar = d.customEmojiFallback || '⭐';
-            statusEmojiHtml = await renderPremiumEmojiOrFallback(
-                String(d.customemojiid), fallbackChar, provider, 'premium-emoji'
-            );
-        }
-
-        const msgHtml = await msgToHtml(d.message || '', d.entities || [], provider);
-
-        return {
-            name, color, nameHtml, avatarB64, mediaB64, isSticker,
-            rColor, rName, rMsg: d.replyMessage, statusEmojiHtml, msgHtml,
-            userId: d.id || name, fName, isAbsoluteLast: d.isAbsoluteLast
-        };
-    }));
-
-    const items = rows.map((m, i) => {
-        const prev = rows[i - 1], next = rows[i + 1];
-        const samePrev = prev && prev.userId === m.userId && !m.fName;
-        const sameNext = next && next.userId === m.userId && !next.fName;
-        let groupClass = 'single-message';
-        if      (samePrev && sameNext) groupClass = 'middle-in-group';
-        else if (samePrev)             groupClass = 'last-in-group';
-        else if (sameNext)             groupClass = 'first-in-group';
-        const breakClass = (!samePrev && i > 0) ? 'sender-break' : '';
-        return { ...m, groupClass, breakClass, showName: !samePrev && !m.isSticker, showAvatar: !sameNext };
-    });
-
-    const MSG_IN = '#111112';
-
-    const css = `
-:root { --r: ${20 * SCALE}px; --rs: ${5 * SCALE}px; }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: ${CSS_FONT}; background: transparent; -webkit-font-smoothing: antialiased; }
-#wrap { display: inline-flex; flex-direction: column; gap: 0; padding: ${30 * SCALE}px; background: transparent; }
-.bubble-container { display: flex; align-items: flex-end; position: relative; width: max-content; min-width: ${100 * SCALE}px; max-width: ${400 * SCALE}px; margin: ${2 * SCALE}px ${10 * SCALE}px; gap: ${6 * SCALE}px; }
-.bubble-container.sender-break { margin-top: ${10 * SCALE}px; }
-.bubble-pp { width: ${PP_SIZE}px; height: ${PP_SIZE}px; border-radius: 50%; flex-shrink: 0; margin-right: ${10 * SCALE}px; background-size: cover; background-position: center; border: ${1 * SCALE}px solid rgba(255,255,255,0.05); }
-.bubble-pp.hidden { opacity: 0; pointer-events: none; }
-.bubble { position: relative; padding: ${11 * SCALE}px ${24 * SCALE}px ${11 * SCALE}px ${16 * SCALE}px; background: ${MSG_IN}; color: #fff; font-size: ${MSG_FS}px; line-height: 1.48; width: fit-content; max-width: 100%; overflow-wrap: break-word; border-radius: var(--r); }
-.bubble-container.in.single-message .bubble { border-bottom-left-radius: 0 !important; }
-.bubble-container.in.first-in-group .bubble { border-bottom-left-radius: var(--rs); border-top-left-radius: var(--r); }
-.bubble-container.in.middle-in-group .bubble { border-top-left-radius: var(--rs); border-bottom-left-radius: var(--rs); }
-.bubble-container.in.last-in-group .bubble { border-top-left-radius: var(--rs); border-bottom-left-radius: 0 !important; }
-.bubble::before { content: ""; display: none; position: absolute; }
-.bubble-container.in.last-in-group .bubble::before, .bubble-container.in.single-message .bubble::before { display: block; bottom: 0; left: -${8 * SCALE}px; width: 0; height: 0; border-style: solid; border-width: 0 0 ${10 * SCALE}px ${8 * SCALE}px; border-color: transparent transparent ${MSG_IN} transparent; }
-.bubble-container.is-sticker { max-width: ${200 * SCALE}px; align-items: flex-end; margin-bottom: ${18 * SCALE}px; gap: 0; }
-.bubble-container.is-sticker .bubble { background: transparent !important; box-shadow: none !important; padding: 0 !important; }
-.bubble-container.is-sticker .bubble::before { display: none !important; }
-.sticker-img { width: ${200 * SCALE}px; display: block; border-radius: ${8 * SCALE}px; }
-.bubble-name { font-size: ${NAME_FS}px; font-weight: 600; margin-bottom: ${4 * SCALE}px; display: flex; align-items: center; white-space: nowrap; }
-.bubble-name .name-text { display: inline-block; }
-.f-line { font-size: ${MSG_FS * 0.75}px; color: #64b5f6; margin-bottom: ${4 * SCALE}px; opacity: 0.9; }
-.premium-emoji { width: ${18 * SCALE}px; height: ${18 * SCALE}px; margin-left: ${2 * SCALE}px; vertical-align: middle; display: inline-block; }
-.link { color: #64b5f6; display: inline-block; word-break: break-all; text-decoration: none; }
-.reply-block { background: rgba(255,255,255,0.06); border-radius: ${6 * SCALE}px; padding: ${6 * SCALE}px ${10 * SCALE}px; border-left: ${4 * SCALE}px solid; margin-bottom: ${10 * SCALE}px; max-width: ${300 * SCALE}px; overflow: hidden; }
-.reply-name { font-size: ${MSG_FS * 0.72}px; font-weight: 600; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.reply-text { font-size: ${MSG_FS * 0.7}px; color: #7f91a4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.emoji { height: 1.2em; width: 1.2em; vertical-align: middle; display: inline-block; }
-.msg-emoji { height: 1.3em; width: 1.3em; vertical-align: middle; display: inline-block; }
-code { font-family: 'JetBrains Mono','Fira Code','Consolas','Courier New',monospace; background: rgba(255,255,255,0.1); padding: 0.1em 0.3em; border-radius: 4px; font-size: 0.9em; }
-pre { font-family: 'JetBrains Mono','Fira Code','Consolas','Courier New',monospace; background: rgba(255,255,255,0.08); padding: 8px; border-radius: 6px; margin: 4px 0; display: block; white-space: pre-wrap; word-break: break-all; font-size: 0.85em; border-left: 3px solid rgba(255,255,255,0.2); }
-.spoiler { background: rgba(255,255,255,0.15); color: transparent; border-radius: 4px; filter: blur(5px); }
-.blockquote { display: block; border-left: 3px solid #64b5f6; padding-left: 10px; margin: 4px 0; font-style: italic; color: #7f91a4; }
-`;
-
-    const htmlBody = items.map(m => {
-        let bInner = '';
-        if (m.isSticker) {
-            bInner = m.mediaB64
-                ? `<img src="${m.mediaB64}" class="sticker-img"/>`
-                : `<div style="font-style:italic;color:#7f91a4;font-size:0.7em">[Sticker]</div>`;
+        // Avatar
+        let avatarSrc;
+        if (msg.inputImageBuffer) {
+            const b64 = Buffer.isBuffer(msg.inputImageBuffer)
+                ? msg.inputImageBuffer.toString('base64')
+                : msg.inputImageBuffer;
+            avatarSrc = `data:image/png;base64,${b64}`;
         } else {
-            if (m.fName)    bInner += `<div class="f-line">Forwarded from <span style="color:#64b5f6">${m.fName}</span></div>`;
-            if (m.showName) bInner += `<div class="bubble-name" style="color:${m.color}"><span class="name-text">${m.nameHtml}</span>${m.statusEmojiHtml || ''}</div>`;
-            if (m.rName)    bInner += `<div class="reply-block" style="border-left-color:${m.rColor}"><div class="reply-name" style="color:${m.rColor}">${m.rName}</div><div class="reply-text">${escapeHtml(m.rMsg)}</div></div>`;
-            if (m.mediaB64) bInner += `<img src="${m.mediaB64}" class="sticker-img" style="margin-bottom:${6 * SCALE}px;"/>`;
-            if (m.msgHtml)  bInner += `<div class="bubble-content">${m.msgHtml}</div>`;
+            avatarSrc = generateAvatarSvg(firstName, lastName, colorId);
         }
-        return `
-<div class="bubble-container in ${m.groupClass} ${m.isAbsoluteLast ? 'is-absolute-last' : ''} ${m.isSticker ? 'is-sticker' : ''} ${m.breakClass}">
-    <div class="bubble-pp ${m.showAvatar ? '' : 'hidden'}" style="background-image:url(${m.avatarB64})"></div>
-    <div class="bubble">${bInner}</div>
-</div>`;
-    }).join('');
 
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>${css}</style>
-</head>
-<body>
-<div id="wrap">${htmlBody}</div>
-</body>
-</html>`;
+        // Message content
+        const messageHtml = await entitiesToHtml(
+            msg.message || '',
+            msg.entities || [],
+            provider
+        );
 
-    console.log('🎨 Starting Puppeteer render...');
-    const t0   = Date.now();
-    const page = await acquirePage();
+        // Reply section
+        let replyHtml = '';
+        if (msg.replySender || msg.replyMessage) {
+            const replyColor = getNameColor(msg.replysendercolor || msg.replySenderColor || 0);
+            replyHtml = `
+                <div class="reply-block" style="border-left: 2px solid ${replyColor}; padding-left: 8px; margin-bottom: 6px; opacity: 0.7;">
+                    <div class="reply-sender" style="color: ${replyColor}; font-size: 13px; font-weight: 600;">${escapeHtml(msg.replySender || '')}</div>
+                    <div class="reply-text" style="font-size: 13px; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px;">${escapeHtml(msg.replyMessage || '')}</div>
+                </div>
+            `;
+        }
+
+        // Media section
+        let mediaHtml = '';
+        if (msg.mediaBuffer) {
+            const mediaBuf = Buffer.isBuffer(msg.mediaBuffer)
+                ? msg.mediaBuffer
+                : Buffer.from(msg.mediaBuffer, 'base64');
+            const mediaB64 = `data:image/png;base64,${mediaBuf.toString('base64')}`;
+            mediaHtml = `<div class="media-block" style="margin-bottom: 6px;"><img src="${mediaB64}" style="max-width: 100%; border-radius: 8px;" /></div>`;
+        }
+
+        // Name display with optional custom emoji
+        let nameHtml = `<span style="color: ${nameColor}; font-weight: 600; font-size: 14px;">${escapeHtml(firstName)} ${escapeHtml(lastName)}</span>`;
+
+        if (msg.customemojiid) {
+            const emojiHtml = await renderPremiumEmojiOrFallback(
+                String(msg.customemojiid), '⭐', provider, 'name-emoji'
+            );
+            nameHtml += ` ${emojiHtml}`;
+        }
+
+        const tailSvg = isLast ? `
+            <div class="tail" style="position: absolute; bottom: 0; left: -8px; width: 20px; height: 20px;">
+                <svg viewBox="0 0 11 20" width="11" height="20">
+                    <path d="M11 0 C11 0 10 7 6 12 C2 17 0 20 0 20 L11 20 Z" fill="#1E2A3A"/>
+                </svg>
+            </div>
+        ` : '';
+
+        messagesHtml += `
+            <div class="message-row" style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: ${isLast ? '0' : '2'}px;">
+                ${idx === 0 ? `<img class="avatar" src="${avatarSrc}" style="width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0;" />` : '<div style="width: 42px; flex-shrink: 0;"></div>'}
+                <div class="bubble" style="
+                    background: #1E2A3A;
+                    border-radius: ${idx === 0 ? '12px 12px' : '4px 12px'} ${isLast ? '12px 0px' : '12px 4px'};
+                    padding: 7px 10px;
+                    max-width: 380px;
+                    min-width: 100px;
+                    position: relative;
+                    word-wrap: break-word;
+                ">
+                    ${idx === 0 ? nameHtml + '<br/>' : ''}
+                    ${replyHtml}
+                    ${mediaHtml}
+                    <div class="msg-text" style="color: #fff; font-size: 15px; line-height: 1.4; font-family: 'Noto Sans', 'Noto Sans CJK SC', 'Noto Sans Arabic', 'Noto Sans Devanagari', 'Noto Sans Bengali', 'Noto Color Emoji', 'Segoe UI', Roboto, Arial, sans-serif;">${messageHtml || '&nbsp;'}</div>
+                    ${tailSvg}
+                </div>
+            </div>
+        `;
+    }
+
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body {
+                background: transparent;
+                padding: 8px;
+                display: inline-block;
+            }
+            .quote-container {
+                display: inline-flex;
+                flex-direction: column;
+                gap: 1px;
+            }
+            code {
+                background: rgba(0,0,0,0.3);
+                padding: 1px 4px;
+                border-radius: 4px;
+                font-family: 'JetBrains Mono', 'Fira Code', 'Noto Sans Mono', monospace;
+                font-size: 13px;
+            }
+            pre {
+                background: rgba(0,0,0,0.3);
+                padding: 8px;
+                border-radius: 6px;
+                font-family: 'JetBrains Mono', 'Fira Code', 'Noto Sans Mono', monospace;
+                font-size: 13px;
+                overflow-x: auto;
+                white-space: pre-wrap;
+                margin: 4px 0;
+            }
+            .spoiler {
+                background: #666;
+                color: #666;
+                border-radius: 2px;
+                padding: 0 2px;
+            }
+            .blockquote {
+                display: block;
+                border-left: 3px solid #6366f1;
+                padding-left: 8px;
+                margin: 4px 0;
+            }
+            .link {
+                color: #60a5fa;
+            }
+            .msg-emoji {
+                width: 20px;
+                height: 20px;
+                vertical-align: middle;
+                display: inline-block;
+            }
+            .name-emoji {
+                width: 18px;
+                height: 18px;
+                vertical-align: middle;
+                display: inline-block;
+            }
+            img.avatar {
+                image-rendering: auto;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="quote-container">
+            ${messagesHtml}
+        </div>
+    </body>
+    </html>
+    `;
+}
+
+// =============================================================================
+// MAIN: GENERATE QUOTE IMAGE
+// =============================================================================
+async function createImage(messages) {
+    if (!messages || messages.length === 0) {
+        throw new Error('No messages provided');
+    }
+
+    const html = await buildQuoteHtml(messages);
+    const browser = await getBrowser();
+    const page = await browser.newPage();
 
     try {
-        await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        // Set viewport
+        await page.setViewport({ width: 512, height: 512, deviceScaleFactor: 2 });
 
+        // Set content
+        await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+
+        // Wait for any images to load
         await page.evaluate(() => {
-            return new Promise(resolve => {
-                const imgs = [...document.querySelectorAll('img')];
-                if (imgs.length === 0) return resolve();
-                let settled = 0;
-                const done = () => { if (++settled >= imgs.length) resolve(); };
-                setTimeout(resolve, 5000);
-                imgs.forEach(img => {
-                    if (img.complete && img.naturalWidth > 0) done();
-                    else if (img.complete) done();
-                    else {
-                        let fired = false;
-                        const handler = () => { if (!fired) { fired = true; done(); } };
-                        img.addEventListener('load',  handler);
-                        img.addEventListener('error', () => setTimeout(handler, 100));
-                    }
-                });
-            });
+            return Promise.all(
+                Array.from(document.querySelectorAll('img')).map(img => {
+                    if (img.complete) return Promise.resolve();
+                    return new Promise(resolve => {
+                        img.onload = resolve;
+                        img.onerror = resolve;
+                    });
+                })
+            );
         });
 
-        const element = await page.$('#wrap');
-        if (!element) throw new Error('Could not find #wrap element');
+        // Get bounding box of content
+        const boundingBox = await page.evaluate(() => {
+            const el = document.querySelector('.quote-container');
+            if (!el) return null;
+            const rect = el.getBoundingClientRect();
+            return {
+                x: Math.floor(rect.x),
+                y: Math.floor(rect.y),
+                width: Math.ceil(rect.width),
+                height: Math.ceil(rect.height),
+            };
+        });
 
-        const screenshot = await element.screenshot({ omitBackground: true, type: 'png' });
-        console.log(`✅ Puppeteer render done in ${Date.now() - t0}ms`);
+        if (!boundingBox || boundingBox.width === 0 || boundingBox.height === 0) {
+            throw new Error('Failed to get content dimensions');
+        }
 
-        return await sharp(screenshot)
-            .trim({ threshold: 5 })
-            .sharpen({ sigma: 0.5 })
-            .webp({ quality: 100, lossless: true })
+        // Screenshot the quote area
+        const pngBuffer = await page.screenshot({
+            type: 'png',
+            clip: {
+                x: boundingBox.x * 2,
+                y: boundingBox.y * 2,
+                width: boundingBox.width * 2,
+                height: boundingBox.height * 2,
+            },
+            omitBackground: true,
+        });
+
+        // Convert to WebP with sharp
+        const webpBuffer = await sharp(pngBuffer)
+            .resize({
+                width: 512,
+                height: Math.min(Math.ceil(512 * (boundingBox.height / boundingBox.width)), 512),
+                fit: 'inside',
+                withoutEnlargement: true,
+            })
+            .webp({ quality: 90 })
             .toBuffer();
 
+        return webpBuffer;
     } finally {
-        releasePage(page);
+        await page.close().catch(() => {});
     }
 }
 
 module.exports = createImage;
-
-if (require.main === module) {
-    const http = require('http');
-    const port = process.env.PORT || 7860;
-    http.createServer((req, res) => {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('Premium Quoter Engine is Running! 🚀\n');
-    }).listen(port, '0.0.0.0', () => {
-        console.log(`\n✅ Quoter Engine: http://0.0.0.0:${port}\n`);
-    });
-}
