@@ -141,3 +141,4 @@ app.listen(port, () => {
     console.log(`\n🚀 Premium Quoter UI: http://localhost:${port}`);
     console.log(`ℹ️  Hugging Face Space is now active.\n`);
 });
+ 
