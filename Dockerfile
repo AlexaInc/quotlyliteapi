@@ -359,6 +359,9 @@ RUN npm install --production
 # Expose port
 EXPOSE 7860
 
+# Health check - use /health endpoint for faster response
+HEALTHCHECK --interval=10s --timeout=5s --retries=3 --start-period=30s \
+    CMD curl -f http://localhost:7860/health || exit 1
 
 # Start the application
 CMD ["node", "app.js"]
