@@ -1,23 +1,11 @@
 require('dotenv').config();
 const express    = require('express');
 const path       = require('path');
-const fs         = require('fs');
 const bodyParser = require('body-parser');
-
-// Lazy-load createImage to not block startup
-let createImage = null;
-const getCreateImage = () => {
-    if (!createImage) {
-        createImage = require('./generatequote2');
-    }
-    return createImage;
-};
+const createImage = require('./generatequote2');
 
 const app  = express();
-// HuggingFace Spaces sets PORT env variable - must use it!
-const port = parseInt(process.env.PORT, 10) || 7860;
-
-console.log(`[STARTUP] Using port: ${port} (from env: ${process.env.PORT || 'not set'})`);
+const port = process.env.PORT || 7860;
 
 // ── Password for the update endpoint (read from env) ─────────────────────────
 // If UPDATE_PASSWORD is not set, the update endpoint is DISABLED for safety
@@ -32,39 +20,14 @@ if (!UPDATE_PASSWORD) {
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
-// ── Health check endpoint (HuggingFace Spaces checks this) ────────────────────
-app.get('/health', (req, res) => {
-    console.log(`[${new Date().toISOString()}] Health check hit`);
-    res.status(200).send('OK');
-});
-
-// ── Root endpoint - respond immediately ───────────────────────────────────────
+// ── Serve static UI ───────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
-    console.log(`[${new Date().toISOString()}] Root endpoint hit`);
-    const indexPath = path.join(__dirname, 'index.html');
-    if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
-    } else {
-        // Fallback if index.html doesn't exist
-        res.status(200).send(`
-            <!DOCTYPE html>
-            <html>
-            <head><title>Quotly Lite API</title></head>
-            <body style="font-family: sans-serif; padding: 40px; background: #1a1a2e; color: #fff;">
-                <h1>🚀 Quotly Lite API is running!</h1>
-                <p>POST to <code>/api/generate</code> to create quote images.</p>
-                <p>Server time: ${new Date().toISOString()}</p>
-            </body>
-            </html>
-        `);
-    }
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // ── Generate sticker endpoint ─────────────────────────────────────────────────
 app.post('/api/generate', async (req, res) => {
-    console.log(`[${new Date().toISOString()}] Generate request received`);
     try {
-        const createImageFn = getCreateImage();
         const { messages, emojiProvider } = req.body;
 
         // Default to 'apple' (iPhone) if no provider specified
@@ -98,7 +61,7 @@ app.post('/api/generate', async (req, res) => {
             }];
         }
 
-        const buffer = await createImageFn(msgList);
+        const buffer = await createImage(msgList);
 
         res.set('Content-Type', 'image/webp');
         res.send(buffer);
@@ -174,20 +137,7 @@ app.post('/api/update', (req, res) => {
 });
 
 // ── Start server ──────────────────────────────────────────────────────────────
-// Bind to 0.0.0.0 so HuggingFace Spaces (and Docker) can access it externally
-const server = app.listen(port, () => {
-    console.log(`\n🚀 Premium Quoter UI: http://0.0.0.0:${port}`);
-    console.log(`ℹ️  Hugging Face Space is now active.`);
-    console.log(`[READY] Server accepting connections on port ${port}\n`);
-});
-
-server.on('error', (err) => {
-    console.error('❌ Server error:', err);
-    process.exit(1);
-});
-
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-    console.log('SIGTERM received, shutting down...');
-    server.close(() => process.exit(0));
+app.listen(port, () => {
+    console.log(`\n🚀 Premium Quoter UI: http://localhost:${port}`);
+    console.log(`ℹ️  Hugging Face Space is now active.\n`);
 });
