@@ -16,16 +16,10 @@ RUN apt-get update && apt-get install -y \
 
 # =============================================================================
 # ALL APT FONT PACKAGES - maximum coverage from debian repos
-# FIXED: Removed packages that don't exist in Debian Bookworm repos:
-#   - fonts-thabit (use fonts-hosny-thabit instead)
-#   - fonts-sinhala (use fonts-lklug-sinhala instead)
-#   - fonts-khmeros-core (use fonts-khmeros instead)
-#   - fonts-takao-pgothic (use fonts-takao instead)
-#   - fonts-abyssinica (use fonts-sil-abyssinica instead)
-#   - fonts-firacode-otf (use fonts-firacode instead)
+# FIXED: 6 package names corrected for Debian Bookworm
 # =============================================================================
 RUN apt-get update && apt-get install -y \
-    # -- Noto family (Google's universal coverage) ----------------------------
+    # ── Noto family (Google's universal coverage) ────────────────────────────
     fonts-noto \
     fonts-noto-core \
     fonts-noto-extra \
@@ -35,23 +29,23 @@ RUN apt-get update && apt-get install -y \
     fonts-noto-cjk-extra \
     fonts-noto-color-emoji \
     fonts-noto-mono \
-    # -- DejaVu (wide Unicode coverage) --------------------------------------
+    # ── DejaVu (wide Unicode coverage) ────────────────────────────────────────
     fonts-dejavu \
     fonts-dejavu-core \
     fonts-dejavu-extra \
-    # -- Liberation (Microsoft font substitutes) ------------------------------
+    # ── Liberation (Microsoft font substitutes) ──────────────────────────────
     fonts-liberation \
     fonts-liberation2 \
-    # -- GNU FreeFont (comprehensive Unicode) ---------------------------------
+    # ── GNU FreeFont (comprehensive Unicode) ──────────────────────────────────
     fonts-freefont-ttf \
     fonts-freefont-otf \
-    # -- Symbola - covers virtually every symbol Unicode has ------------------
+    # ── Symbola - covers virtually every symbol Unicode has ──────────────────
     fonts-symbola \
-    # -- Ancient/Historic scripts ---------------------------------------------
+    # ── Ancient/Historic scripts ──────────────────────────────────────────────
     fonts-ancient-scripts \
-    # -- Unifont - LAST RESORT, has EVERY single Unicode codepoint ------------
+    # ── Unifont - LAST RESORT, has EVERY single Unicode codepoint ────────────
     fonts-unifont \
-    # -- Arabic family --------------------------------------------------------
+    # ── Arabic family ─────────────────────────────────────────────────────────
     fonts-arabeyes \
     fonts-hosny-amiri \
     fonts-kacst \
@@ -61,7 +55,7 @@ RUN apt-get update && apt-get install -y \
     fonts-hosny-thabit \
     fonts-farsiweb \
     fonts-nafees \
-    # -- Indic scripts --------------------------------------------------------
+    # ── Indic scripts ─────────────────────────────────────────────────────────
     fonts-deva \
     fonts-beng \
     fonts-gujr \
@@ -91,7 +85,7 @@ RUN apt-get update && apt-get install -y \
     fonts-sarai \
     fonts-smc \
     fonts-yrsa-rasa \
-    # -- Southeast Asian scripts ----------------------------------------------
+    # ── Southeast Asian scripts ───────────────────────────────────────────────
     fonts-tibetan-machine \
     fonts-tlwg-garuda \
     fonts-tlwg-kinnari \
@@ -106,6 +100,7 @@ RUN apt-get update && apt-get install -y \
     fonts-tlwg-typo \
     fonts-tlwg-umpush \
     fonts-tlwg-waree \
+    fonts-lklug-sinhala \
     fonts-khmeros \
     fonts-lao \
     fonts-sil-padauk \
@@ -117,7 +112,7 @@ RUN apt-get update && apt-get install -y \
     fonts-sil-ezra \
     fonts-sil-andika \
     fonts-sil-doulos \
-    # -- East Asian (CJK supplements) ----------------------------------------
+    # ── East Asian (CJK supplements) ──────────────────────────────────────────
     fonts-arphic-ukai \
     fonts-arphic-uming \
     fonts-vlgothic \
@@ -138,13 +133,15 @@ RUN apt-get update && apt-get install -y \
     fonts-baekmuk \
     fonts-wqy-microhei \
     fonts-wqy-zenhei \
-    # -- Hebrew ---------------------------------------------------------------
+    # ── Hebrew ────────────────────────────────────────────────────────────────
     fonts-hosny-thabit \
     culmus \
     culmus-fancy \
-    # -- Georgian -------------------------------------------------------------
+    # ── Ethiopic ──────────────────────────────────────────────────────────────
+    fonts-sil-abyssinica \
+    # ── Georgian ──────────────────────────────────────────────────────────────
     fonts-bpg-georgian \
-    # -- Misc -----------------------------------------------------------------
+    # ── Misc ──────────────────────────────────────────────────────────────────
     fonts-droid-fallback \
     fonts-roboto \
     fonts-cantarell \
@@ -161,13 +158,12 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/* || true
 
 # =============================================================================
-# DOWNLOAD COMPLETE NOTO STACK - every script Unicode has
+# DOWNLOAD NOTO SYMBOLS/MATH/MUSIC
 # =============================================================================
 RUN mkdir -p /usr/share/fonts/truetype/noto-manual
 
 ENV NOTO_BASE="https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf"
 
-# -- SYMBOLS, MATH, MUSIC (highest priority for tofu prevention) --------------
 RUN set -e; for font in \
     "NotoSansSymbols/NotoSansSymbols-Regular.ttf" \
     "NotoSansSymbols/NotoSansSymbols-Bold.ttf" \
@@ -183,58 +179,46 @@ RUN set -e; for font in \
     done
 
 # =============================================================================
-# ADDITIONAL GOOGLE FONTS (Downloaded directly for better coverage)
+# ADDITIONAL NOTO SCRIPT FONTS
 # =============================================================================
 RUN mkdir -p /usr/share/fonts/truetype/google-extra
 
-# Download additional fonts for better multilingual support
-RUN set -e; \
-    # Noto Sans/Serif for additional scripts
-    for family in \
-        "NotoSansAdlam" "NotoSansAvestan" "NotoSansBamum" "NotoSansBatak" \
-        "NotoSansBuginese" "NotoSansBuhid" "NotoSansCham" "NotoSansCherokee" \
-        "NotoSansCoptic" "NotoSansEthiopic" "NotoSansGeorgian" "NotoSansGothic" \
-        "NotoSansHanunoo" "NotoSansImperialAramaic" "NotoSansJavanese" \
-        "NotoSansKayahLi" "NotoSansLepcha" "NotoSansLimbu" "NotoSansLisu" \
-        "NotoSansMandaic" "NotoSansMeeteiMayek" "NotoSansMongolian" \
-        "NotoSansNKo" "NotoSansNewTaiLue" "NotoSansOgham" "NotoSansOlChiki" \
-        "NotoSansOldItalic" "NotoSansOldPersian" "NotoSansOsmanya" \
-        "NotoSansPhoenician" "NotoSansRejang" "NotoSansRunic" \
-        "NotoSansSamaritan" "NotoSansSaurashtra" "NotoSansSundanese" \
-        "NotoSansSylotiNagri" "NotoSansTagalog" "NotoSansTagbanwa" \
-        "NotoSansTaiLe" "NotoSansTaiTham" "NotoSansTaiViet" \
-        "NotoSansThaana" "NotoSansTifinagh" "NotoSansVai" "NotoSansYi" \
+RUN set -e; for family in \
+    "NotoSansAdlam" "NotoSansAvestan" "NotoSansBamum" "NotoSansBatak" \
+    "NotoSansBuginese" "NotoSansBuhid" "NotoSansCham" "NotoSansCherokee" \
+    "NotoSansCoptic" "NotoSansEthiopic" "NotoSansGeorgian" "NotoSansGothic" \
+    "NotoSansHanunoo" "NotoSansImperialAramaic" "NotoSansJavanese" \
+    "NotoSansKayahLi" "NotoSansLepcha" "NotoSansLimbu" "NotoSansLisu" \
+    "NotoSansMandaic" "NotoSansMeeteiMayek" "NotoSansMongolian" \
+    "NotoSansNKo" "NotoSansNewTaiLue" "NotoSansOgham" "NotoSansOlChiki" \
+    "NotoSansOldItalic" "NotoSansOldPersian" "NotoSansOsmanya" \
+    "NotoSansPhoenician" "NotoSansRejang" "NotoSansRunic" \
+    "NotoSansSamaritan" "NotoSansSaurashtra" "NotoSansSundanese" \
+    "NotoSansSylotiNagri" "NotoSansTagalog" "NotoSansTagbanwa" \
+    "NotoSansTaiLe" "NotoSansTaiTham" "NotoSansTaiViet" \
+    "NotoSansThaana" "NotoSansTifinagh" "NotoSansVai" "NotoSansYi" \
     ; do \
         wget -q -O "/usr/share/fonts/truetype/google-extra/${family}-Regular.ttf" \
             "${NOTO_BASE}/${family}/${family}-Regular.ttf" 2>/dev/null || true; \
     done
 
 # =============================================================================
-# DOWNLOAD EXTRA WIDELY-USED FONTS (Roboto, Inter, etc.)
+# EXTRA WEBFONTS (Inter)
 # =============================================================================
 RUN mkdir -p /usr/share/fonts/truetype/extra-webfonts && \
-    # Inter font
     wget -q -O /tmp/inter.zip "https://github.com/rsms/inter/releases/download/v4.0/Inter-4.0.zip" && \
     unzip -qo /tmp/inter.zip -d /tmp/inter 2>/dev/null || true && \
     find /tmp/inter -name "*.ttf" -exec cp {} /usr/share/fonts/truetype/extra-webfonts/ \; 2>/dev/null || true && \
     rm -rf /tmp/inter /tmp/inter.zip || true
 
 # =============================================================================
-# FONTCONFIG SETUP - ensure all fonts are indexed
-# =============================================================================
-RUN fc-cache -fv && \
-    echo "Font installation complete. Total fonts:" && \
-    fc-list | wc -l
-
-# =============================================================================
-# CREATE FONTCONFIG CONFIG FOR BETTER FALLBACK
+# FONTCONFIG
 # =============================================================================
 RUN mkdir -p /etc/fonts/conf.d && \
     cat > /etc/fonts/local.conf << 'EOF'
 <?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 <fontconfig>
-    <!-- Enable antialiasing globally -->
     <match target="font">
         <edit name="antialias" mode="assign"><bool>true</bool></edit>
         <edit name="hinting" mode="assign"><bool>true</bool></edit>
@@ -242,8 +226,6 @@ RUN mkdir -p /etc/fonts/conf.d && \
         <edit name="rgba" mode="assign"><const>rgb</const></edit>
         <edit name="lcdfilter" mode="assign"><const>lcddefault</const></edit>
     </match>
-
-    <!-- Fallback chain for sans-serif -->
     <alias>
         <family>sans-serif</family>
         <prefer>
@@ -280,24 +262,17 @@ RUN mkdir -p /etc/fonts/conf.d && \
             <family>Unifont</family>
         </prefer>
     </alias>
-
-    <!-- Fallback chain for serif -->
     <alias>
         <family>serif</family>
         <prefer>
             <family>Noto Serif</family>
             <family>Noto Serif CJK SC</family>
-            <family>Noto Serif CJK TC</family>
-            <family>Noto Serif CJK JP</family>
-            <family>Noto Serif CJK KR</family>
             <family>DejaVu Serif</family>
             <family>Liberation Serif</family>
             <family>FreeSerif</family>
             <family>Unifont</family>
         </prefer>
     </alias>
-
-    <!-- Fallback chain for monospace -->
     <alias>
         <family>monospace</family>
         <prefer>
@@ -310,21 +285,6 @@ RUN mkdir -p /etc/fonts/conf.d && \
             <family>Unifont</family>
         </prefer>
     </alias>
-
-    <!-- Symbol/Emoji fallback -->
-    <alias>
-        <family>Noto Color Emoji</family>
-        <default><family>emoji</family></default>
-    </alias>
-    <match target="pattern">
-        <test name="family" qual="any"><string>emoji</string></test>
-        <edit name="family" mode="prepend"><string>Noto Color Emoji</string></edit>
-        <edit name="family" mode="append"><string>Symbola</string></edit>
-        <edit name="family" mode="append"><string>Noto Sans Symbols</string></edit>
-        <edit name="family" mode="append"><string>Noto Sans Symbols 2</string></edit>
-    </match>
-
-    <!-- Last resort fallback for ANY unknown glyph -->
     <match target="pattern">
         <edit name="family" mode="append"><string>Noto Sans</string></edit>
         <edit name="family" mode="append"><string>Noto Sans Symbols</string></edit>
@@ -335,7 +295,6 @@ RUN mkdir -p /etc/fonts/conf.d && \
 </fontconfig>
 EOF
 
-# Rebuild font cache after config changes
 RUN fc-cache -fv
 
 # =============================================================================
@@ -348,20 +307,19 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV CHROMIUM_PATH=/usr/bin/chromium
 
-# Clone the repository from GitHub (all fixes already committed)
-RUN git clone https://github.com/AlexaInc/quotlyliteapi.git /tmp/quotly && \
-    cp -a /tmp/quotly/. /app/ && \
-    rm -rf /tmp/quotly
-
-# Install dependencies
+# Copy package files and install
+COPY package.json ./
 RUN npm install --production
+
+# Copy application code
+COPY . .
 
 # Expose port
 EXPOSE 7860
 
-# Health check - use /health endpoint for faster response
-HEALTHCHECK --interval=10s --timeout=5s --retries=3 --start-period=30s \
-    CMD curl -f http://localhost:7860/health || exit 1
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:7860/ || exit 1
 
 # Start the application
 CMD ["node", "app.js"]
