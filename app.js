@@ -20,9 +20,30 @@ if (!UPDATE_PASSWORD) {
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
+// ── Health check endpoint (HuggingFace Spaces checks this) ────────────────────
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // ── Serve static UI ───────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    const indexPath = path.join(__dirname, 'index.html');
+    if (require('fs').existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        // Fallback if index.html doesn't exist
+        res.status(200).send(`
+            <!DOCTYPE html>
+            <html>
+            <head><title>Quotly Lite API</title></head>
+            <body style="font-family: sans-serif; padding: 40px; background: #1a1a2e; color: #fff;">
+                <h1>🚀 Quotly Lite API is running!</h1>
+                <p>POST to <code>/api/generate</code> to create quote images.</p>
+                <p>Server time: ${new Date().toISOString()}</p>
+            </body>
+            </html>
+        `);
+    }
 });
 
 // ── Generate sticker endpoint ─────────────────────────────────────────────────
@@ -137,7 +158,7 @@ app.post('/api/update', (req, res) => {
 });
 
 // ── Start server ──────────────────────────────────────────────────────────────
-
+// Bind to 0.0.0.0 so HuggingFace Spaces (and Docker) can access it externally
 app.listen(port, '0.0.0.0', () => {
     console.log(`\n🚀 Premium Quoter UI: http://0.0.0.0:${port}`);
     console.log(`ℹ️  Hugging Face Space is now active.\n`);
