@@ -137,8 +137,8 @@ app.post('/api/update', (req, res) => {
 });
 
 // ── Start server ──────────────────────────────────────────────────────────────
-app.listen(port, () => {
-    console.log(`\n🚀 Premium Quoter UI: http://localhost:${port}`);
+
+app.listen(port, '0.0.0.0', () => {
+    console.log(`\n🚀 Premium Quoter UI: http://0.0.0.0:${port}`);
     console.log(`ℹ️  Hugging Face Space is now active.\n`);
 });
- 
