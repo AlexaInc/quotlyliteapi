@@ -1,7 +1,7 @@
 {
   "name": "quotly-lite-api",
-  "version": "4.0.0",
-  "description": "Telegram Quote Sticker Generator - MTProto Edition",
+  "version": "4.0.1",
+  "description": "Telegram Quote Sticker Generator - MTProto Edition (Fixed)",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
