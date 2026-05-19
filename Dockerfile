@@ -348,16 +348,16 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV CHROMIUM_PATH=/usr/bin/chromium
 
-# Copy package files and install
-COPY package.json ./
-RUN npm install --production
+# Clone the repository from GitHub (all fixes already committed)
+RUN git clone https://github.com/AlexaInc/quotlyliteapi.git /tmp/quotly && \
+    cp -a /tmp/quotly/. /app/ && \
+    rm -rf /tmp/quotly
 
-# Copy application code
-COPY . .
+# Install dependencies
+RUN npm install --production
 
 # Expose port
 EXPOSE 7860
-
 
 
 # Start the application
